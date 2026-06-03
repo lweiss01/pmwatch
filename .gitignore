@@ -1,0 +1,16 @@
+# Database
+data/
+*.db
+
+# Logs
+logs/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.env
+
+# Editor
+.cursor/
+.vscode/

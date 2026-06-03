@@ -1,0 +1,202 @@
+﻿{
+    "executive_actions":  [
+                              {
+                                  "risk":  "WH chief of staff, cabinet members",
+                                  "series":  "KXCABOUT",
+                                  "name":  "Cabinet Departures"
+                              },
+                              {
+                                  "risk":  "WH personnel office",
+                                  "series":  "KXNEXTAG",
+                                  "name":  "Next AG"
+                              },
+                              {
+                                  "risk":  "WH personnel office",
+                                  "series":  "KXNEXTDEF",
+                                  "name":  "Next SecDef"
+                              },
+                              {
+                                  "risk":  "WH personnel office",
+                                  "series":  "KXNEXTSTATE",
+                                  "name":  "Next SecState"
+                              },
+                              {
+                                  "risk":  "WH personnel office",
+                                  "series":  "KXNEXTODNI",
+                                  "name":  "Next DNI"
+                              },
+                              {
+                                  "risk":  "WH counsel, pardon recipients",
+                                  "series":  "KXTRUMPPARDONS",
+                                  "name":  "Trump Pardons"
+                              },
+                              {
+                                  "risk":  "WH counsel",
+                                  "series":  "KXTRUMPPARDONFAMILY",
+                                  "name":  "Family Pardons"
+                              },
+                              {
+                                  "risk":  "DoD, DHS leadership",
+                                  "series":  "KXINSURRECTION",
+                                  "name":  "Insurrection Act"
+                              },
+                              {
+                                  "risk":  "DoD, DHS leadership",
+                                  "series":  "KXMARTIAL",
+                                  "name":  "Martial Law"
+                              },
+                              {
+                                  "risk":  "DOJ leadership",
+                                  "series":  "KXHABEAS",
+                                  "name":  "Habeas Corpus"
+                              },
+                              {
+                                  "risk":  "NSC, State Dept",
+                                  "series":  "KXWITHDRAW",
+                                  "name":  "Withdrawals"
+                              },
+                              {
+                                  "risk":  "WH, OMB",
+                                  "series":  "KXDOED",
+                                  "name":  "Education Dept Abolish"
+                              },
+                              {
+                                  "risk":  "WH, DOGE staff",
+                                  "series":  "KXAGENCYELIM",
+                                  "name":  "Agency Eliminations"
+                              },
+                              {
+                                  "risk":  "WH counsel",
+                                  "series":  "KXEOTRUMPTERM",
+                                  "name":  "Executive Orders Count"
+                              },
+                              {
+                                  "risk":  "Cabinet members",
+                                  "series":  "KXAMEND25",
+                                  "name":  "25th Amendment"
+                              },
+                              {
+                                  "risk":  "WH inner circle",
+                                  "series":  "KXTRUMPRESIGN",
+                                  "name":  "Trump Resignation"
+                              }
+                          ],
+    "economic_data":  [
+                          {
+                              "risk":  "FOMC members, Treasury staff",
+                              "series":  "KXFED",
+                              "name":  "Fed Funds Rate"
+                          },
+                          {
+                              "risk":  "BLS staff",
+                              "series":  "KXCPI",
+                              "name":  "CPI Inflation"
+                          },
+                          {
+                              "risk":  "BEA staff",
+                              "series":  "KXGDP",
+                              "name":  "US GDP Growth"
+                          }
+                      ],
+    "geopolitical":  [
+                         {
+                             "risk":  "NSC, State Dept",
+                             "series":  "KXGREENTERRITORY",
+                             "name":  "Greenland Acquisition"
+                         },
+                         {
+                             "risk":  "NSC, State Dept",
+                             "series":  "KXCANTERRITORY",
+                             "name":  "Canada Territory"
+                         },
+                         {
+                             "risk":  "NSC, State Dept, DoD",
+                             "series":  "KXCANAL",
+                             "name":  "Panama Canal"
+                         },
+                         {
+                             "risk":  "NSC, State Dept",
+                             "series":  "KXRECOGROC",
+                             "name":  "Recognize Taiwan"
+                         },
+                         {
+                             "risk":  "NSC, State Dept",
+                             "series":  "KXZELENSKYPUTIN",
+                             "name":  "Zelensky-Putin talks"
+                         },
+                         {
+                             "risk":  "NSC, State Dept",
+                             "series":  "KXUSAKIM",
+                             "name":  "Kim Jong-Un US Visit"
+                         },
+                         {
+                             "risk":  "NSC, State Dept",
+                             "series":  "KXABRAHAMSA",
+                             "name":  "Israel-Saudi Relations"
+                         },
+                         {
+                             "risk":  "NSC, State Dept",
+                             "series":  "KXABRAHAMSY",
+                             "name":  "Israel-Syria Relations"
+                         }
+                     ],
+    "congressional":  [
+                          {
+                              "risk":  "Congressional leadership",
+                              "series":  "KXHOUSE",
+                              "name":  "House Control"
+                          },
+                          {
+                              "risk":  "Congressional leadership",
+                              "series":  "KXSENATE",
+                              "name":  "Senate Control"
+                          },
+                          {
+                              "risk":  "House Judiciary members",
+                              "series":  "KXIMPEACH",
+                              "name":  "Impeachment"
+                          },
+                          {
+                              "risk":  "Congressional whips",
+                              "series":  "KXVETOOVERRIDE",
+                              "name":  "Veto Override"
+                          },
+                          {
+                              "risk":  "Budget committee members",
+                              "series":  "KXGOVSHUT",
+                              "name":  "Government Shutdown"
+                          },
+                          {
+                              "risk":  "Appropriations committee",
+                              "series":  "KXCR",
+                              "name":  "Continuing Resolution"
+                          }
+                      ],
+    "scotus":  [
+                   {
+                       "risk":  "Justices themselves, clerks",
+                       "series":  "KXSCOTUSRESIGN",
+                       "name":  "SCOTUS Resignations"
+                   },
+                   {
+                       "risk":  "Senate judiciary members",
+                       "series":  "KXSCOTUSCHANGE",
+                       "name":  "Court Size Change"
+                   },
+                   {
+                       "risk":  "WH, Senate judiciary",
+                       "series":  "KXSCOURT",
+                       "name":  "Next Justice"
+                   },
+                   {
+                       "risk":  "SCOTUS clerks, justices",
+                       "series":  "KXTARIFFS",
+                       "name":  "SCOTUS Tariffs Case"
+                   },
+                   {
+                       "risk":  "WH, Senate",
+                       "series":  "KXSCOTUSPOWER",
+                       "name":  "Court Composition"
+                   }
+               ]
+}
