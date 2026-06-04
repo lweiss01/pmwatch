@@ -91,28 +91,44 @@ Thresholds: Yellow >= 25, Red >= 60.
 
 ### KXNEXTAG: Todd Blanche AG Nomination (June 3, 2026)
 
-On June 3, 2026 — pmwatch's first run — the market `KXNEXTAG-29-TBLA` 
-scored **167** (compound signal), the highest score recorded that day.
+On June 3, 2026 — pmwatch's first live run — the Kalshi market
+`KXNEXTAG-29-TBLA` generated three escalating anomaly scores tied to
+trading on who would be President Trump's next Attorney General.
 
-| Market           | Score | Signal   | MNPI Risk           |
-|------------------|-------|----------|---------------------|
-| KXNEXTAG-29-TBLA | 167   | compound | WH personnel office |
+| Market           | Score | Time (ET)      | MNPI Risk           |
+|------------------|-------|----------------|---------------------|
+| KXNEXTAG-29-TBLA | 118   | 11:35:49 a.m.  | WH personnel office |
+| KXNEXTAG-29-TBLA | 167   | 12:04:12 p.m.  | WH personnel office |
+| KXNEXTAG-29-TBLA | 377   | 9:27:56 p.m.   | WH personnel office |
 
-Later that night, President Trump announced he would nominate Todd Blanche 
-as Attorney General. The ticker suffix `TBLA` corresponds directly to 
-Blanche's initials.
+Later that day, President Trump said during a White House dinner that he
+would nominate Acting Attorney General Todd Blanche to serve as attorney
+general on a permanent basis, according to subsequent reporting that
+described the remarks as occurring Wednesday evening. The ticker suffix
+`TBLA` corresponds directly to Blanche's initials.
 
-pmwatch detected anomalous trading volume and price divergence in this 
-market before the nomination was publicly announced. No user identity 
-data was required — only the market-level pattern was sufficient to flag 
-it as high-risk.
+pmwatch first detected anomalous activity in this market at
+**11:35:49 a.m. ET** (score 118), followed by a stronger alert at
+**12:04:12 p.m. ET** (score 167). Both signals occurred well before
+public reporting of the White House dinner remarks and were associated
+with upward price movement, elevated volume, and a risk profile linked
+to the White House personnel process.
 
-**Source:** AP: President Trump says he will nominate Todd Blanche to 
-serve as attorney general [https://apnews.com/article/trump-blanche-justice-department-86f44c3c01caf89a1dae9d5b5c468551](https://apnews.com/article/trump-blanche-justice-department-86f44c3c01caf89a1dae9d5b5c468551) (June 3, 2026)
+A third, more concentrated burst of unusual activity was detected at
+**9:27:56 p.m. ET**, with a materially higher anomaly score of **377**.
+This late-evening spike is temporally close to the dinner remarks, but
+the exact time of Trump's statement is not clearly documented in public
+coverage, so this case study does not claim minute-level alignment.
 
-> This is pmwatch's first documented detection. The tool identified 
-> unusual activity in a politically-sensitive market approximately 
-> 10+ hours before the public announcement.
+**Source:** AP, ABC News, NBC News, and other major outlets reporting on
+President Trump's June 3, 2026 statement that he would nominate Todd
+Blanche as attorney general.
+
+> This is pmwatch's first documented detection. The tool identified
+> unusual activity in a politically sensitive market in late morning and
+> early afternoon, well before the president's Wednesday evening remarks
+> were publicly reported, and then flagged a second, sharper anomaly at
+> approximately 9:28 p.m. ET.
 
 ---
 
