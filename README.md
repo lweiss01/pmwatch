@@ -87,6 +87,34 @@ Thresholds: Yellow >= 25, Red >= 60.
 *Note: high scores do not imply insider trading. They flag markets warranting closer examination.*
 
 ---
+## Case Studies
+
+### KXNEXTAG: Todd Blanche AG Nomination (June 3, 2026)
+
+On June 3, 2026 — pmwatch's first run — the market `KXNEXTAG-29-TBLA` 
+scored **167** (compound signal), the highest score recorded that day.
+
+| Market           | Score | Signal   | MNPI Risk           |
+|------------------|-------|----------|---------------------|
+| KXNEXTAG-29-TBLA | 167   | compound | WH personnel office |
+
+Later that night, President Trump announced he would nominate Todd Blanche 
+as Attorney General. The ticker suffix `TBLA` corresponds directly to 
+Blanche's initials.
+
+pmwatch detected anomalous trading volume and price divergence in this 
+market before the nomination was publicly announced. No user identity 
+data was required — only the market-level pattern was sufficient to flag 
+it as high-risk.
+
+**Source:** AP: President Trump says he will nominate Todd Blanche to 
+serve as attorney general [https://apnews.com/article/trump-blanche-justice-department-86f44c3c01caf89a1dae9d5b5c468551](https://apnews.com/article/trump-blanche-justice-department-86f44c3c01caf89a1dae9d5b5c468551) (June 3, 2026)
+
+> This is pmwatch's first documented detection. The tool identified 
+> unusual activity in a politically-sensitive market approximately 
+> 10+ hours before the public announcement.
+
+---
 
 ## Architecture
 
