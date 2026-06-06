@@ -1,0 +1,739 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>pmwatch — Analyst Terminal</title>
+<style>
+  :root {
+    --bg:      #080c14;
+    --col:     #0d1220;
+    --surface: #111827;
+    --surface2:#162032;
+    --border:  #1c2a3e;
+    --text:    #d4dde8;
+    --muted:   #4d6070;
+    --dim:     #2a3a50;
+    --red:     #f05252;
+    --yellow:  #f59e0b;
+    --green:   #10b981;
+    --blue:    #3b82f6;
+    --purple:  #9b7ef8;
+    --accent:  #22d3ee;
+    --accent2: #0891b2;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', ui-monospace, monospace;
+    font-size: 12px;
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    overflow: hidden;
+  }
+
+  /* ── HEADER ── */
+  header {
+    background: var(--col);
+    border-bottom: 1px solid var(--border);
+    padding: 10px 18px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-shrink: 0;
+  }
+  .logo { display: flex; align-items: center; gap: 10px; }
+  .logo-wordmark {
+    font-size: 14px; font-weight: 700;
+    color: var(--accent); letter-spacing: -0.02em;
+  }
+  .logo-sep { color: var(--dim); margin: 0 2px; }
+  .logo-desc { font-size: 10px; color: var(--muted); letter-spacing: 0.05em; }
+  .header-right { display: flex; align-items: center; gap: 12px; }
+  .live-badge {
+    display: flex; align-items: center; gap: 5px;
+    font-size: 10px; color: var(--green); letter-spacing: 0.08em;
+  }
+  .live-dot {
+    width: 5px; height: 5px; background: var(--green);
+    border-radius: 50%; animation: blink 2s infinite;
+  }
+  @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.2} }
+  .hdr-time { font-size: 10px; color: var(--muted); }
+  .hdr-btn {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    color: var(--accent);
+    padding: 4px 12px;
+    border-radius: 4px;
+    font-size: 10px; cursor: pointer;
+    font-family: inherit;
+    letter-spacing: 0.04em;
+    transition: background 0.12s;
+  }
+  .hdr-btn:hover { background: var(--dim); }
+
+  /* ── 3-COLUMN BODY ── */
+  .body-grid {
+    display: grid;
+    grid-template-columns: 200px 1fr 360px;
+    flex: 1;
+    overflow: hidden;
+    gap: 0;
+  }
+
+  /* ── LEFT COLUMN: STATS + CATEGORIES ── */
+  .left-col {
+    background: var(--col);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+  }
+  .left-col::-webkit-scrollbar { width: 3px; }
+  .left-col::-webkit-scrollbar-track { background: transparent; }
+  .left-col::-webkit-scrollbar-thumb { background: var(--dim); border-radius: 2px; }
+
+  .col-section-hdr {
+    padding: 10px 14px 6px;
+    font-size: 9px; color: var(--muted);
+    text-transform: uppercase; letter-spacing: 0.12em;
+    border-bottom: 1px solid var(--border);
+  }
+  .stat-row {
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border);
+  }
+  .stat-row-label {
+    font-size: 9px; color: var(--muted);
+    text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 3px;
+  }
+  .stat-row-value {
+    font-size: 22px; font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    line-height: 1;
+  }
+  .stat-row-value.blue   { color: var(--blue); }
+  .stat-row-value.green  { color: var(--green); }
+  .stat-row-value.yellow { color: var(--yellow); }
+  .stat-row-value.red    { color: var(--red); }
+
+  .cat-row {
+    padding: 8px 14px;
+    border-bottom: 1px solid var(--border);
+    cursor: pointer;
+    transition: background 0.1s;
+  }
+  .cat-row:hover { background: var(--surface2); }
+  .cat-row.active { background: rgba(34,211,238,0.06); }
+  .cat-row-top { display: flex; align-items: center; justify-content: space-between; }
+  .cat-row-name { font-size: 11px; color: var(--text); }
+  .cat-row-score {
+    font-size: 10px; font-weight: 700;
+    padding: 1px 6px; border-radius: 3px;
+    font-variant-numeric: tabular-nums;
+  }
+  .cat-row-count { font-size: 9px; color: var(--muted); margin-top: 2px; }
+
+  /* ── CENTER COLUMN: ANOMALY FEED ── */
+  .center-col {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    border-right: 1px solid var(--border);
+  }
+  .feed-header {
+    background: var(--col);
+    border-bottom: 1px solid var(--border);
+    padding: 10px 16px;
+    display: flex; align-items: center; justify-content: space-between;
+    flex-shrink: 0;
+  }
+  .feed-title {
+    font-size: 11px; font-weight: 600;
+    color: var(--accent); text-transform: uppercase; letter-spacing: 0.08em;
+  }
+  .feed-count { font-size: 10px; color: var(--muted); }
+  .feed-tabs {
+    background: var(--col);
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    flex-shrink: 0;
+    overflow-x: auto;
+  }
+  .feed-tabs::-webkit-scrollbar { height: 0; }
+  .feed-tab {
+    padding: 8px 16px;
+    font-size: 10px; color: var(--muted); cursor: pointer;
+    border-bottom: 2px solid transparent;
+    text-transform: uppercase; letter-spacing: 0.05em;
+    white-space: nowrap;
+    transition: color 0.12s, border-color 0.12s;
+    flex-shrink: 0;
+  }
+  .feed-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+  .feed-tab:hover:not(.active) { color: var(--text); }
+
+  .feed-list { flex: 1; overflow-y: auto; }
+  .feed-list::-webkit-scrollbar { width: 3px; }
+  .feed-list::-webkit-scrollbar-track { background: transparent; }
+  .feed-list::-webkit-scrollbar-thumb { background: var(--dim); border-radius: 2px; }
+
+  .feed-item {
+    padding: 11px 16px;
+    border-bottom: 1px solid var(--border);
+    cursor: pointer;
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 8px;
+    transition: background 0.1s;
+  }
+  .feed-item:hover { background: var(--surface2); }
+  .feed-item.selected {
+    background: rgba(34,211,238,0.06);
+    border-left: 2px solid var(--accent);
+    padding-left: 14px;
+  }
+  .feed-item-main {}
+  .feed-item-top {
+    display: flex; align-items: baseline; gap: 8px; margin-bottom: 4px;
+  }
+  .feed-ticker {
+    font-size: 12px; font-weight: 700; color: var(--text);
+    letter-spacing: -0.01em;
+  }
+  .feed-cat {
+    font-size: 9px; color: var(--muted);
+    text-transform: uppercase; letter-spacing: 0.06em;
+  }
+  .feed-title-text {
+    font-size: 10px; color: var(--muted);
+    line-height: 1.45; margin-bottom: 5px;
+  }
+  .feed-meta { display: flex; gap: 5px; flex-wrap: wrap; }
+  .feed-chip {
+    font-size: 9px; color: var(--muted);
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 3px; padding: 1px 6px;
+  }
+  .feed-chip.up   { color: var(--green); }
+  .feed-chip.down { color: var(--red); }
+  .feed-chip.tag  {
+    color: var(--accent);
+    background: rgba(34,211,238,0.07);
+    border-color: rgba(34,211,238,0.2);
+  }
+  .feed-score-col { display: flex; align-items: flex-start; padding-top: 1px; }
+  .feed-score {
+    font-size: 16px; font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    line-height: 1;
+  }
+  .feed-score.red    { color: var(--red); }
+  .feed-score.yellow { color: var(--yellow); }
+
+  /* ── RIGHT COLUMN: DETAIL ── */
+  .right-col {
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+    background: var(--col);
+  }
+  .right-col::-webkit-scrollbar { width: 3px; }
+  .right-col::-webkit-scrollbar-track { background: transparent; }
+  .right-col::-webkit-scrollbar-thumb { background: var(--dim); border-radius: 2px; }
+
+  .detail-hdr {
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--border);
+    font-size: 9px; color: var(--muted);
+    text-transform: uppercase; letter-spacing: 0.12em;
+    background: var(--col);
+    position: sticky; top: 0; z-index: 2;
+  }
+  .detail-empty {
+    padding: 48px 20px; text-align: center;
+    color: var(--muted); font-size: 11px; line-height: 2.2;
+  }
+  .detail-block {
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border);
+  }
+  .detail-block:last-child { border-bottom: none; }
+  .detail-key {
+    font-size: 9px; color: var(--muted);
+    text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 4px;
+  }
+  .detail-val { font-size: 12px; color: var(--text); line-height: 1.5; }
+  .detail-score {
+    font-size: 36px; font-weight: 700;
+    font-variant-numeric: tabular-nums; line-height: 1;
+  }
+  .detail-score.red    { color: var(--red); }
+  .detail-score.yellow { color: var(--yellow); }
+
+  .bar-grid { display: flex; flex-direction: column; gap: 8px; margin-top: 4px; }
+  .bar-row { display: flex; align-items: center; gap: 8px; }
+  .bar-lbl { width: 72px; font-size: 9px; color: var(--muted); }
+  .bar-track {
+    flex: 1; height: 4px;
+    background: var(--border); border-radius: 2px; overflow: hidden;
+  }
+  .bar-fill { height: 100%; border-radius: 2px; transition: width 0.5s; }
+  .bar-num { width: 36px; text-align: right; font-size: 9px; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+  .risk-box {
+    margin-top: 6px;
+    background: rgba(240,82,82,0.06);
+    border: 1px solid rgba(240,82,82,0.2);
+    border-radius: 5px;
+    padding: 8px 11px;
+    font-size: 10px;
+    color: rgba(240,82,82,0.9);
+    line-height: 1.5;
+  }
+  .price-move { display: flex; align-items: center; gap: 8px; font-size: 11px; margin-top: 3px; font-variant-numeric: tabular-nums; }
+  .price-up   { color: var(--green); }
+  .price-down { color: var(--red); }
+  .kalshi-link {
+    color: var(--accent); text-decoration: none; font-size: 10px;
+  }
+  .kalshi-link:hover { text-decoration: underline; }
+
+  .empty-state {
+    padding: 40px 16px; text-align: center; color: var(--muted);
+  }
+  .empty-icon  { font-size: 24px; margin-bottom: 8px; }
+  .empty-text  { font-size: 11px; line-height: 1.9; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">
+    <div class="logo-wordmark">pmwatch</div>
+    <span class="logo-sep">/</span>
+    <div class="logo-desc">Prediction Market Anomaly Monitor</div>
+  </div>
+  <div class="header-right">
+    <div class="live-badge">
+      <div class="live-dot"></div>
+      LIVE
+    </div>
+    <div class="hdr-time" id="lastUpdate">--</div>
+    <button class="hdr-btn" onclick="loadAll()">↻ Refresh</button>
+  </div>
+</header>
+
+<div class="body-grid">
+
+  <!-- LEFT: stats + category breakdown -->
+  <div class="left-col">
+    <div class="col-section-hdr">Overview</div>
+    <div class="stat-row">
+      <div class="stat-row-label">Markets</div>
+      <div class="stat-row-value blue" id="statMarkets">--</div>
+    </div>
+    <div class="stat-row">
+      <div class="stat-row-label">Trades</div>
+      <div class="stat-row-value green" id="statTrades">--</div>
+    </div>
+    <div class="stat-row">
+      <div class="stat-row-label">Anomalies 24h</div>
+      <div class="stat-row-value yellow" id="statAnomalies24h">--</div>
+    </div>
+    <div class="stat-row">
+      <div class="stat-row-label">Total Flagged</div>
+      <div class="stat-row-value red" id="statTotal">--</div>
+    </div>
+
+    <div class="col-section-hdr" style="margin-top:4px">By Category</div>
+    <div id="catList">
+      <div style="padding:14px;color:var(--muted);font-size:10px;">Loading...</div>
+    </div>
+  </div>
+
+  <!-- CENTER: anomaly feed -->
+  <div class="center-col">
+    <div class="feed-header">
+      <div class="feed-title">⚡ Anomaly Feed</div>
+      <div class="feed-count" id="feedCount">0 signals</div>
+    </div>
+	<div id="simBanner" style="display:none;align-items:center;gap:8px;padding:7px 16px;background:rgba(245,158,11,0.08);border-bottom:1px solid rgba(245,158,11,0.25);font-size:10px;color:#f59e0b;flex-shrink:0;">
+  <span>⚠</span>
+  <span>SIMULATION MODE — API unavailable. Displaying mock data. Start the API server with <code style="background:rgba(245,158,11,0.12);padding:1px 5px;border-radius:3px;">uvicorn api:app --port 8000</code></span>
+</div>
+    <div class="feed-tabs">
+      <div class="feed-tab active" onclick="filterFeed('all',this)">All</div>
+      <div class="feed-tab" onclick="filterFeed('executive_actions',this)">Executive</div>
+      <div class="feed-tab" onclick="filterFeed('scotus',this)">SCOTUS</div>
+      <div class="feed-tab" onclick="filterFeed('economic_data',this)">Economic</div>
+      <div class="feed-tab" onclick="filterFeed('geopolitical',this)">Geo</div>
+      <div class="feed-tab" onclick="filterFeed('congressional',this)">Congress</div>
+    </div>
+    <div class="feed-list" id="feedList">
+      <div class="empty-state">
+        <div class="empty-icon">📡</div>
+        <div class="empty-text">Loading anomaly data...<br>First collection run may take ~15 minutes.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- RIGHT: signal detail -->
+  <div class="right-col">
+    <div class="detail-hdr">Signal Detail</div>
+    <div id="detailPanel">
+      <div class="detail-empty">← Select an anomaly<br>to view signal detail</div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+/* ── MOCK DATA (used if API unavailable) ── */
+const MOCK = {
+  stats: {
+    total_markets: 410, total_trades: 123700,
+    anomalies_24h: 6, total_anomalies: 6,
+    by_category: [
+      { risk_group:'executive_actions', count:2, max_score:167 },
+      { risk_group:'geopolitical',      count:2, max_score:152 },
+      { risk_group:'economic_data',     count:1, max_score:105 },
+      { risk_group:'scotus',            count:0, max_score:0   },
+      { risk_group:'congressional',     count:0, max_score:0   }
+    ]
+  },
+  anomalies: []
+};
+
+/* ── CATEGORY LOOKUP MAP ──
+   Maps the watchlist category field stored in watched_markets.category
+   to the filter key used by the tabs. This is the fix for the filter bug:
+   real data has category values like 'executive_actions', 'scotus' etc.
+   set at collection time from the watchlist JSON keys.
+*/
+const SERIES_TO_CATEGORY = {
+  KXCABOUT:           'executive_actions',
+  KXNEXTAG:           'executive_actions',
+  KXNEXTDEF:          'executive_actions',
+  KXNEXTSTATE:        'executive_actions',
+  KXNEXTODNI:         'executive_actions',
+  KXTRUMPPARDONS:     'executive_actions',
+  KXTRUMPPARDONFAMILY:'executive_actions',
+  KXINSURRECTION:     'executive_actions',
+  KXMARTIAL:          'executive_actions',
+  KXHABEAS:           'executive_actions',
+  KXWITHDRAW:         'executive_actions',
+  KXDOED:             'executive_actions',
+  KXAGENCYELIM:       'executive_actions',
+  KXEOTRUMPTERM:      'executive_actions',
+  KXAMEND25:          'executive_actions',
+  KXTRUMPRESIGN:      'executive_actions',
+  KXSCOTUSRESIGN:     'scotus',
+  KXSCOTUSCHANGE:     'scotus',
+  KXSCOURT:           'scotus',
+  KXTARIFFS:          'scotus',
+  KXSCOTUSPOWER:      'scotus',
+  KXFED:              'economic_data',
+  KXCPI:              'economic_data',
+  KXGDP:              'economic_data',
+  KXGREENTERRITORY:   'geopolitical',
+  KXCANTERRITORY:     'geopolitical',
+  KXCANAL:            'geopolitical',
+  KXRECOGROC:         'geopolitical',
+  KXZELENSKYPUTIN:    'geopolitical',
+  KXUSAKIM:           'geopolitical',
+  KXABRAHAMSA:        'geopolitical',
+  KXABRAHAMSY:        'geopolitical',
+  KXHOUSE:            'congressional',
+  KXSENATE:           'congressional',
+  KXIMPEACH:          'congressional',
+  KXVETOOVERRIDE:     'congressional',
+  KXGOVSHUT:          'congressional',
+  KXCR:               'congressional'
+};
+
+function getCategory(anomaly) {
+  // Use the category field stored at collection time if available
+  if (anomaly.category) return anomaly.category;
+  // Fall back to series_ticker lookup
+  if (anomaly.series_ticker) {
+    return SERIES_TO_CATEGORY[anomaly.series_ticker] || 'other';
+  }
+  // Last resort: check risk_group directly (works for mock data)
+  return anomaly.risk_group || 'other';
+}
+
+const CAT_COLORS = {
+  executive_actions: '#f59e0b',
+  scotus:            '#9b7ef8',
+  economic_data:     '#10b981',
+  geopolitical:      '#f05252',
+  congressional:     '#3b82f6'
+};
+
+const CAT_LABELS = {
+  executive_actions: 'Executive',
+  scotus:            'SCOTUS',
+  economic_data:     'Economic',
+  geopolitical:      'Geo',
+  congressional:     'Congress'
+};
+
+let allAnomalies = [];
+let selectedId   = null;
+let currentFilter = 'all';
+
+function fmtNum(n) {
+  if (n >= 1e6) return (n/1e6).toFixed(1)+'M';
+  if (n >= 1e3) return (n/1e3).toFixed(1)+'K';
+  return n.toString();
+}
+function timeAgo(iso) {
+  const d = (Date.now() - new Date(iso)) / 1000;
+  if (d < 60)    return Math.floor(d)+'s ago';
+  if (d < 3600)  return Math.floor(d/60)+'m ago';
+  if (d < 86400) return Math.floor(d/3600)+'h ago';
+  return Math.floor(d/86400)+'d ago';
+}
+function scoreColor(s) { return s >= 100 ? 'red' : 'yellow'; }
+
+function renderStats(data) {
+  document.getElementById('statMarkets').textContent      = fmtNum(data.total_markets||0);
+  document.getElementById('statTrades').textContent       = fmtNum(data.total_trades||0);
+  document.getElementById('statAnomalies24h').textContent = data.anomalies_24h||0;
+  document.getElementById('statTotal').textContent        = data.total_anomalies||0;
+  const el = document.getElementById('catList');
+  if (!data.by_category?.length) {
+    el.innerHTML = '<div style="padding:14px;color:var(--muted);font-size:10px;">No data</div>';
+    return;
+  }
+  el.innerHTML = data.by_category.map(c => {
+    const col     = CAT_COLORS[c.risk_group] || '#64748b';
+    const score   = Math.round(c.max_score||0);
+    const label   = CAT_LABELS[c.risk_group] || c.risk_group;
+    const isActive = currentFilter === c.risk_group;
+    return `<div class="cat-row${isActive?' active':''}" onclick="clickCat('${c.risk_group}',this)">
+      <div class="cat-row-top">
+        <div class="cat-row-name">${label}</div>
+        <div class="cat-row-score" style="color:${col};background:${col}22;border:1px solid ${col}44">${score}</div>
+      </div>
+      <div class="cat-row-count">${c.count} signal${c.count!==1?'s':''}</div>
+    </div>`;
+  }).join('');
+}
+
+// Maps risk_group display values back to category filter keys
+const RISK_GROUP_TO_CATEGORY = {
+  'Cabinet Departures':   'executive_actions',
+  'Next AG':              'executive_actions',
+  'Next SecDef':          'executive_actions',
+  'Next SecState':        'executive_actions',
+  'Next DNI':             'executive_actions',
+  'Trump Pardons':        'executive_actions',
+  'Family Pardons':       'executive_actions',
+  'Insurrection Act':     'executive_actions',
+  'Martial Law':          'executive_actions',
+  'Habeas Corpus':        'executive_actions',
+  'Withdrawals':          'executive_actions',
+  'Education Dept Abolish':'executive_actions',
+  'Agency Eliminations':  'executive_actions',
+  'Executive Orders Count':'executive_actions',
+  '25th Amendment':       'executive_actions',
+  'Trump Resignation':    'executive_actions',
+  'SCOTUS Resignations':  'scotus',
+  'Court Size Change':    'scotus',
+  'Next Justice':         'scotus',
+  'SCOTUS Tariffs Case':  'scotus',
+  'Court Composition':    'scotus',
+  'Fed Funds Rate':       'economic_data',
+  'CPI Inflation':        'economic_data',
+  'US GDP Growth':        'economic_data',
+  'Greenland Acquisition':'geopolitical',
+  'Canada Territory':     'geopolitical',
+  'Panama Canal':         'geopolitical',
+  'Recognize Taiwan':     'geopolitical',
+  'Zelensky-Putin talks': 'geopolitical',
+  'Kim Jong-Un US Visit': 'geopolitical',
+  'Israel-Saudi Relations':'geopolitical',
+  'Israel-Syria Relations':'geopolitical',
+  'House Control':        'congressional',
+  'Senate Control':       'congressional',
+  'Impeachment':          'congressional',
+  'Veto Override':        'congressional',
+  'Government Shutdown':  'congressional',
+  'Continuing Resolution':'congressional'
+};
+
+function clickCat(group, el) {
+  // group is risk_group value e.g. "CPI Inflation"
+  // prefix with rg: so renderFeed knows to match on risk_group not category
+  currentFilter = 'rg:' + group;
+  document.querySelectorAll('.cat-row').forEach(r => r.classList.remove('active'));
+  el.classList.add('active');
+  // clear top tab active state since this is a finer-grained filter
+  document.querySelectorAll('.feed-tab').forEach(t => t.classList.remove('active'));
+  renderFeed();
+}
+
+async function loadStats() {
+  try { renderStats(await (await fetch('/api/stats')).json()); }
+  catch { renderStats(MOCK.stats); }
+}
+
+async function loadAnomalies() {
+  try {
+    allAnomalies = await (await fetch('/api/anomalies?limit=100')).json();
+    document.getElementById('simBanner').style.display = 'none';
+  } catch {
+    allAnomalies = MOCK.anomalies;
+    document.getElementById('simBanner').style.display = 'flex';
+  }
+  renderFeed();
+  document.getElementById('lastUpdate').textContent = new Date().toLocaleTimeString();
+}
+
+function filterFeed(filter, tabEl) {
+  currentFilter = filter;
+  document.querySelectorAll('.feed-tab').forEach(t => t.classList.remove('active'));
+  tabEl.classList.add('active');
+  // sync the left sidebar
+  document.querySelectorAll('.cat-row').forEach(r => r.classList.remove('active'));
+  if (filter !== 'all') {
+    document.querySelectorAll('.cat-row').forEach(r => {
+      if (r.getAttribute('onclick').includes(`'${filter}'`)) r.classList.add('active');
+    });
+  }
+  renderFeed();
+}
+
+function renderFeed() {
+  const list = document.getElementById('feedList');
+  let filtered;
+
+  if (currentFilter === 'all') {
+    filtered = allAnomalies;
+  } else if (currentFilter.startsWith('rg:')) {
+    // risk_group filter from left nav click
+    const rg = currentFilter.slice(3);
+    filtered = allAnomalies.filter(a => (a.risk_group||'') === rg);
+  } else {
+    // category filter from top tab click
+    filtered = allAnomalies.filter(a => getCategory(a) === currentFilter);
+  }
+
+  document.getElementById('feedCount').textContent =
+    filtered.length + ' signal' + (filtered.length!==1?'s':'');
+
+  if (!filtered.length) {
+    list.innerHTML = `<div class="empty-state">
+      <div class="empty-icon">✅</div>
+      <div class="empty-text">No anomalies in this category.<br>Markets appear normal.</div>
+    </div>`;
+    return;
+  }
+
+  list.innerHTML = filtered.map(a => {
+    const color = scoreColor(a.anomaly_score);
+    const delta = a.price_current - a.price_before;
+    const up    = delta >= 0;
+    const pct   = a.price_before > 0 ? ((Math.abs(delta)/a.price_before)*100).toFixed(1) : '0.0';
+    const sel   = a.id === selectedId ? ' selected' : '';
+    const cat   = getCategory(a);
+    const catLabel = CAT_LABELS[cat] || cat;
+    return `<div class="feed-item${sel}" onclick="selectSignal(${a.id})">
+      <div class="feed-item-main">
+        <div class="feed-item-top">
+          <div class="feed-ticker">${a.ticker}</div>
+          <div class="feed-cat">${catLabel}</div>
+        </div>
+        <div class="feed-title-text">${(a.market_title||'').substring(0,90)}${(a.market_title||'').length>90?'…':''}</div>
+        <div class="feed-meta">
+          <span class="feed-chip tag">${a.trigger_type||''}</span>
+          <span class="feed-chip ${up?'up':'down'}">${up?'▲':'▼'} ${pct}%</span>
+          <span class="feed-chip">${timeAgo(a.detected_time)}</span>
+        </div>
+      </div>
+      <div class="feed-score-col">
+        <div class="feed-score ${color}">${Math.round(a.anomaly_score)}</div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function selectSignal(id) {
+  selectedId = id;
+  renderFeed();
+  const a = allAnomalies.find(x => x.id === id);
+  if (!a) return;
+  const score  = Math.round(a.anomaly_score);
+  const scCol  = scoreColor(a.anomaly_score);
+  const delta  = a.price_current - a.price_before;
+  const up     = delta >= 0;
+  const volZ   = Math.min(100, Math.max(0, (a.volume_zscore/15)*100));
+  const blockR = Math.min(100, (a.block_trade_ratio||0)*100);
+  const priceJ = Math.min(100, Math.abs(delta)*500);
+  const url    = `https://kalshi.com/markets/${(a.series_ticker||'').toLowerCase()}`;
+
+  document.getElementById('detailPanel').innerHTML = `
+    <div class="detail-block">
+      <div class="detail-key">Anomaly Score</div>
+      <div class="detail-score ${scCol}">${score}</div>
+      <div style="font-size:10px;color:var(--muted);margin-top:4px">${a.trigger_type} signal · ${CAT_LABELS[getCategory(a)]||getCategory(a)}</div>
+    </div>
+    <div class="detail-block">
+      <div class="detail-key">Market</div>
+      <div class="detail-val" style="font-size:11px;line-height:1.6">${a.market_title||a.ticker}</div>
+      <div style="margin-top:8px"><a href="${url}" target="_blank" class="kalshi-link">↗ View on Kalshi</a></div>
+    </div>
+    <div class="detail-block">
+      <div class="detail-key">Price Movement</div>
+      <div class="price-move">
+        <span style="color:var(--muted)">${a.price_before?.toFixed(3)}</span>
+        <span style="color:var(--muted)">→</span>
+        <span class="${up?'price-up':'price-down'}">${a.price_current?.toFixed(3)} ${up?'▲':'▼'}</span>
+      </div>
+    </div>
+    <div class="detail-block">
+      <div class="detail-key">Signal Breakdown</div>
+      <div class="bar-grid">
+        <div class="bar-row">
+          <div class="bar-lbl">Vol Z-Score</div>
+          <div class="bar-track"><div class="bar-fill" style="width:${volZ}%;background:var(--accent)"></div></div>
+          <div class="bar-num">${a.volume_zscore?.toFixed(1)}</div>
+        </div>
+        <div class="bar-row">
+          <div class="bar-lbl">Block Trades</div>
+          <div class="bar-track"><div class="bar-fill" style="width:${blockR}%;background:var(--purple)"></div></div>
+          <div class="bar-num">${((a.block_trade_ratio||0)*100).toFixed(0)}%</div>
+        </div>
+        <div class="bar-row">
+          <div class="bar-lbl">Price Jump</div>
+          <div class="bar-track"><div class="bar-fill" style="width:${priceJ}%;background:var(--yellow)"></div></div>
+          <div class="bar-num">${Math.abs(delta).toFixed(3)}</div>
+        </div>
+      </div>
+    </div>
+    <div class="detail-block">
+      <div class="detail-key">MNPI Risk Actors</div>
+      <div class="risk-box">⚠ ${a.mnpi_actors||'Unknown'}</div>
+    </div>
+    <div class="detail-block">
+      <div class="detail-key">Detected</div>
+      <div class="detail-val" style="font-size:10px">${new Date(a.detected_time).toLocaleString()}</div>
+    </div>`;
+}
+
+async function loadAll() {
+  await Promise.all([loadStats(), loadAnomalies()]);
+}
+loadAll();
+setInterval(loadAll, 5 * 60 * 1000);
+</script>
+</body>
+</html>

@@ -1,5 +1,6 @@
 import sqlite3
 import os
+import time
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "data", "pmwatch.db")
 
@@ -74,6 +75,33 @@ def init_db():
             correlated_event TEXT,
             notes TEXT
         );
+
+        CREATE TABLE IF NOT EXISTS clusters (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ticker TEXT NOT NULL,
+            series_ticker TEXT,
+            market_title TEXT,
+            risk_group TEXT,
+            mnpi_actors TEXT,
+            first_seen_ts INTEGER,
+            first_seen_time TEXT,
+            last_seen_ts INTEGER,
+            last_seen_time TEXT,
+            anomaly_count INTEGER NOT NULL,
+            peak_score REAL,
+            total_score REAL,
+            directional_consistency REAL,
+            score_trend REAL,
+            cluster_score REAL,
+            trigger_types TEXT,
+            computed_time TEXT,
+            computed_ts INTEGER,
+            UNIQUE(ticker, first_seen_ts)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_clusters_ticker ON clusters(ticker);
+        CREATE INDEX IF NOT EXISTS idx_clusters_score  ON clusters(cluster_score DESC);
+        CREATE INDEX IF NOT EXISTS idx_clusters_last   ON clusters(last_seen_ts  DESC);
 
         CREATE TABLE IF NOT EXISTS collection_log (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -182,7 +210,6 @@ def insert_anomaly(anomaly: dict):
 def get_recent_trades(ticker: str, minutes: int = 120) -> list:
     conn = get_conn()
     c = conn.cursor()
-    import time
     cutoff_ts = int(time.time()) - (minutes * 60)
     c.execute("""
         SELECT * FROM trades
@@ -197,7 +224,6 @@ def get_recent_trades(ticker: str, minutes: int = 120) -> list:
 def get_candles(ticker: str, limit_minutes: int = 4320) -> list:
     conn = get_conn()
     c = conn.cursor()
-    import time
     cutoff_ts = int(time.time()) - (limit_minutes * 60)
     c.execute("""
         SELECT * FROM candlesticks
@@ -220,6 +246,78 @@ def log_collection_run(run: dict):
     """, run)
     conn.commit()
     conn.close()
+
+
+def upsert_cluster(cluster: dict):
+    conn = get_conn()
+    c = conn.cursor()
+    c.execute("""
+        INSERT INTO clusters (
+            ticker, series_ticker, market_title, risk_group, mnpi_actors,
+            first_seen_ts, first_seen_time, last_seen_ts, last_seen_time,
+            anomaly_count, peak_score, total_score, directional_consistency,
+            score_trend, cluster_score, trigger_types,
+            computed_time, computed_ts
+        ) VALUES (
+            :ticker, :series_ticker, :market_title, :risk_group, :mnpi_actors,
+            :first_seen_ts, :first_seen_time, :last_seen_ts, :last_seen_time,
+            :anomaly_count, :peak_score, :total_score, :directional_consistency,
+            :score_trend, :cluster_score, :trigger_types,
+            :computed_time, :computed_ts
+        )
+        ON CONFLICT(ticker, first_seen_ts) DO UPDATE SET
+            last_seen_ts            = excluded.last_seen_ts,
+            last_seen_time          = excluded.last_seen_time,
+            anomaly_count           = excluded.anomaly_count,
+            peak_score              = excluded.peak_score,
+            total_score             = excluded.total_score,
+            directional_consistency = excluded.directional_consistency,
+            score_trend             = excluded.score_trend,
+            cluster_score           = excluded.cluster_score,
+            trigger_types           = excluded.trigger_types,
+            computed_time           = excluded.computed_time,
+            computed_ts             = excluded.computed_ts
+    """, cluster)
+    conn.commit()
+    conn.close()
+
+
+def get_clusters(min_count: int = 2, limit: int = 50, active_days: int = 30) -> list:
+    conn = get_conn()
+    c = conn.cursor()
+    cutoff = int(time.time()) - (active_days * 86400)
+    c.execute("""
+        SELECT
+            ticker, series_ticker, market_title, risk_group, mnpi_actors,
+            first_seen_time, last_seen_time, anomaly_count,
+            peak_score, total_score, directional_consistency,
+            score_trend, cluster_score, trigger_types
+        FROM clusters
+        WHERE anomaly_count >= ?
+          AND last_seen_ts >= ?
+        ORDER BY cluster_score DESC
+        LIMIT ?
+    """, (min_count, cutoff, limit))
+    rows = [dict(r) for r in c.fetchall()]
+    conn.close()
+    return rows
+
+
+def get_ticker_cluster_history(ticker: str) -> list:
+    conn = get_conn()
+    c = conn.cursor()
+    c.execute("""
+        SELECT
+            first_seen_time, last_seen_time, anomaly_count,
+            peak_score, directional_consistency, score_trend,
+            cluster_score, trigger_types
+        FROM clusters
+        WHERE ticker = ?
+        ORDER BY last_seen_ts DESC
+    """, (ticker,))
+    rows = [dict(r) for r in c.fetchall()]
+    conn.close()
+    return rows
 
 
 if __name__ == "__main__":

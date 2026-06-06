@@ -6,6 +6,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 import db
 import collector
 import scorer
+import cluster_scorer
 
 logging.basicConfig(
     level=logging.INFO,
@@ -32,6 +33,13 @@ def collect_and_score():
             log.info(f"*** {flagged} anomalies flagged this run ***")
     except Exception as e:
         log.error(f"Scorer failed: {e}")
+        return
+    try:
+        clusters = cluster_scorer.run_cluster_scorer()
+        if clusters:
+            log.info(f"*** {clusters} clusters updated ***")
+    except Exception as e:
+        log.error(f"Cluster scorer failed: {e}")
 
 
 if __name__ == "__main__":
