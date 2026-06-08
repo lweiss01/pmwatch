@@ -130,51 +130,6 @@ trading on who would be President Trump's next Attorney General.
 
 Later that day, President Trump said during a White House dinner that he
 would nominate Acting Attorney General Todd Blanche to serve as attorney
-general on a permanent basis, according to subsequent reporting that
-described the remarks as occurring Wednesday evening. The ticker suffix
-`TBLA` corresponds directly to Blanche's initials.
-
-pmwatch first detected anomalous activity in this market at
-**11:35:49 a.m. ET** (score 118), followed by a stronger alert at
-**12:04:12 p.m. ET** (score 167). Both signals occurred well before
-public reporting of the White House dinner remarks and were associated
-with upward price movement, elevated volume, and a risk profile linked
-to the White House personnel process.
-
-A third, more concentrated burst of unusual activity was detected at
-**9:27:56 p.m. ET**, with a materially higher anomaly score of **377**.
-This late-evening spike is temporally close to the dinner remarks, but
-the exact time of Trump's statement is not clearly documented in public
-coverage, so this case study does not claim minute-level alignment.
-
-**Source:** AP, ABC News, NBC News, and other major outlets reporting on
-President Trump's June 3, 2026 statement that he would nominate Todd
-Blanche as attorney general.
-
-> This is pmwatch's first documented detection. The tool identified
-> unusual activity in a politically sensitive market in late morning and
-> early afternoon, well before the president's Wednesday evening remarks
-> were publicly reported, and then flagged a second, sharper anomaly at
-> approximately 9:28 p.m. ET.
-
----
-
-## Case Studies
-
-### KXNEXTAG: Todd Blanche AG Nomination (June 3, 2026)
-
-On June 3, 2026 — pmwatch's first live run — the Kalshi market
-`KXNEXTAG-29-TBLA` generated three escalating anomaly scores tied to
-trading on who would be President Trump's next Attorney General.
-
-| Market           | Score | Time (ET)      | MNPI Risk           |
-|------------------|-------|----------------|---------------------|
-| KXNEXTAG-29-TBLA | 118   | 11:35:49 a.m.  | WH personnel office |
-| KXNEXTAG-29-TBLA | 167   | 12:04:12 p.m.  | WH personnel office |
-| KXNEXTAG-29-TBLA | 377   | 9:27:56 p.m.   | WH personnel office |
-
-Later that day, President Trump said during a White House dinner that he
-would nominate Acting Attorney General Todd Blanche to serve as attorney
 general on a permanent basis. The ticker suffix `TBLA` corresponds directly
 to Blanche's initials.
 
@@ -194,9 +149,9 @@ cluster score of **785** — 3 anomalies, escalating, over a 10-hour span.
 President Trump's June 3, 2026 statement that he would nominate Todd Blanche
 as attorney general.
 
-> This is pmwatch's first documented detection. The tool identified unusual 
-> activity in a politically sensitive market in late morning and early afternoon, 
-> well before the president's Wednesday evening remarks were publicly reported, 
+> This is pmwatch's first documented detection. The tool identified unusual
+> activity in a politically sensitive market in late morning and early afternoon,
+> well before the president's Wednesday evening remarks were publicly reported,
 > and then flagged a second, sharper anomaly at approximately 9:28 p.m. ET.
 > The cluster score of 785 makes this the strongest pattern in pmwatch's history.
 
@@ -220,6 +175,7 @@ as attorney general.
     GET  /api/anomalies           # Recent anomaly events, sorted by time
     GET  /api/clusters            # Active clusters sorted by cluster_score
     GET  /api/market/{ticker}/clusters   # Cluster history for a specific market
+    GET  /api/cluster/{ticker}/{first_seen_ts}/events  # Anomaly events within a cluster
     POST /api/clusters/refresh    # Re-run cluster scorer on demand
     GET  /api/markets             # All watched markets with current price/volume
     GET  /api/stats               # Summary stats and category breakdown
@@ -256,7 +212,7 @@ Requires Python 3.10+. No API key needed -- all endpoints used are public.
 - [x] Anomaly scoring (volume Z-score, block trade ratio, price divergence)
 - [x] Gap-based cluster analysis with directional consistency and trend scoring
 - [x] Clusters tab in dashboard with pattern interpretation
-- [ ] Timeline drill-down: individual anomaly events within a cluster
+- [x] Timeline drill-down: individual anomaly events within a cluster
 - [ ] Government calendar integration (BLS release schedule, FOMC dates)
 - [ ] Social media correlation (cross-reference X posts with trade anomalies)
 - [ ] Email/webhook alerts on high cluster scores
