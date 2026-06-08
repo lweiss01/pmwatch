@@ -94,6 +94,7 @@ def init_db():
             score_trend REAL,
             cluster_score REAL,
             trigger_types TEXT,
+            has_block_trades INTEGER DEFAULT 0,
             computed_time TEXT,
             computed_ts INTEGER,
             UNIQUE(ticker, first_seen_ts)
@@ -256,13 +257,13 @@ def upsert_cluster(cluster: dict):
             ticker, series_ticker, market_title, risk_group, mnpi_actors,
             first_seen_ts, first_seen_time, last_seen_ts, last_seen_time,
             anomaly_count, peak_score, total_score, directional_consistency,
-            score_trend, cluster_score, trigger_types,
+            score_trend, cluster_score, trigger_types, has_block_trades,
             computed_time, computed_ts
         ) VALUES (
             :ticker, :series_ticker, :market_title, :risk_group, :mnpi_actors,
             :first_seen_ts, :first_seen_time, :last_seen_ts, :last_seen_time,
             :anomaly_count, :peak_score, :total_score, :directional_consistency,
-            :score_trend, :cluster_score, :trigger_types,
+            :score_trend, :cluster_score, :trigger_types, :has_block_trades,
             :computed_time, :computed_ts
         )
         ON CONFLICT(ticker, first_seen_ts) DO UPDATE SET
@@ -275,6 +276,7 @@ def upsert_cluster(cluster: dict):
             score_trend             = excluded.score_trend,
             cluster_score           = excluded.cluster_score,
             trigger_types           = excluded.trigger_types,
+            has_block_trades        = excluded.has_block_trades,
             computed_time           = excluded.computed_time,
             computed_ts             = excluded.computed_ts
     """, cluster)
@@ -292,7 +294,7 @@ def get_clusters(min_count: int = 2, limit: int = 50, active_days: int = 30) -> 
             first_seen_ts, first_seen_time, last_seen_ts, last_seen_time,
             anomaly_count,
             peak_score, total_score, directional_consistency,
-            score_trend, cluster_score, trigger_types
+            score_trend, cluster_score, trigger_types, has_block_trades
         FROM clusters
         WHERE anomaly_count >= ?
           AND last_seen_ts >= ?
@@ -311,7 +313,7 @@ def get_ticker_cluster_history(ticker: str) -> list:
         SELECT
             first_seen_time, last_seen_time, anomaly_count,
             peak_score, directional_consistency, score_trend,
-            cluster_score, trigger_types
+            cluster_score, trigger_types, has_block_trades
         FROM clusters
         WHERE ticker = ?
         ORDER BY last_seen_ts DESC

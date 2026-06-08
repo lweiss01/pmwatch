@@ -48,7 +48,7 @@ CLUSTER_GAP_HOURS = 72
 MIN_CLUSTER_SIZE = 2
 
 # Threshold above which directional_flag is considered "directional".
-DIRECTIONAL_THRESHOLD = 0.10
+DIRECTIONAL_THRESHOLD = 0.05
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -156,6 +156,7 @@ def compute_cluster_record(ticker: str, events: list[dict]) -> dict:
     consistency = _directional_consistency(events_sorted)
     trend = _score_trend(events_sorted)
     cscore = _cluster_score(peak, count, consistency, trend)
+    has_block = any((e.get("block_trade_ratio") or 0.0) > 0.0 for e in events_sorted)
 
     first = events_sorted[0]
     last = events_sorted[-1]
@@ -177,6 +178,7 @@ def compute_cluster_record(ticker: str, events: list[dict]) -> dict:
         "score_trend": round(trend, 4),
         "cluster_score": cscore,
         "trigger_types": ",".join(sorted({e.get("trigger_type", "") for e in events_sorted})),
+        "has_block_trades": 1 if has_block else 0,
         "computed_time": datetime.now(timezone.utc).isoformat(),
         "computed_ts": int(time.time()),
     }

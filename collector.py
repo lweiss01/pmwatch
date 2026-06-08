@@ -129,13 +129,21 @@ def fetch_candlesticks(series_ticker: str, market_ticker: str) -> list:
         try:
             r = requests.get(url, params={"period_interval": 60}, timeout=10)
             if r.status_code == 400:
+                log.debug(f"Candlesticks 400 for {market_ticker} on {path}")
                 continue  # try next path
+            if r.status_code == 404:
+                log.debug(f"Candlesticks 404 for {market_ticker} on {path}")
+                continue
             if r.status_code == 429:
+                log.warning(f"Candlesticks rate limited for {market_ticker}, waiting 5s")
                 time.sleep(5)
                 continue
             r.raise_for_status()
             time.sleep(RATE_LIMIT_DELAY)
             raw = r.json().get("candlesticks", [])
+            if not raw:
+                log.debug(f"Candlesticks empty response for {market_ticker} on {path}")
+                continue
             candles = []
             for c in raw:
                 price = c.get("price", {})
@@ -149,10 +157,13 @@ def fetch_candlesticks(series_ticker: str, market_ticker: str) -> list:
                     "volume_fp": float(c.get("volume_fp", 0)),
                     "open_interest_fp": float(c.get("open_interest_fp", 0))
                 })
+            log.debug(f"Candlesticks OK for {market_ticker}: {len(candles)} bars via {path}")
             return candles
-        except requests.RequestException:
+        except requests.RequestException as e:
+            log.debug(f"Candlesticks request error for {market_ticker} on {path}: {e}")
             continue
     
+    log.debug(f"Candlesticks unavailable for {market_ticker} (all paths exhausted)")
     return []  # silently skip if both paths fail
 
 
