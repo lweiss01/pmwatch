@@ -62,7 +62,7 @@
 
   .body-grid {
     display: grid;
-    grid-template-columns: 200px 1fr 360px;
+    grid-template-columns: 200px 1fr 420px;
     flex: 1;
     overflow: hidden;
   }
@@ -200,6 +200,35 @@
   .empty-icon { font-size: 24px; margin-bottom: 8px; }
   .empty-text { font-size: 11px; line-height: 1.9; }
   #simBanner { display:none;align-items:center;gap:8px;padding:7px 16px;background:rgba(245,158,11,0.08);border-bottom:1px solid rgba(245,158,11,0.25);font-size:10px;color:#f59e0b;flex-shrink:0; }
+
+  /* Timeline drill-down styles */
+  .event-row {
+    padding: 10px 14px; border-bottom: 1px solid var(--border);
+    display: grid; grid-template-columns: 130px 1fr 55px; gap: 10px; align-items: start;
+    transition: background 0.1s; cursor: default;
+  }
+  .event-row:hover { background: var(--surface2); }
+  .event-time { font-size: 10px; color: var(--muted); white-space: nowrap; }
+  .event-score { font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums; text-align: right; }
+  .event-score.red { color: var(--red); }
+  .event-score.yellow { color: var(--yellow); }
+  .event-main { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+  .event-title { font-size: 11px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .event-meta { display: flex; gap: 6px; flex-wrap: wrap; font-size: 9px; align-items: center; }
+  .event-chip { color: var(--muted); background: var(--surface2); border: 1px solid var(--border); border-radius: 3px; padding: 1px 6px; white-space: nowrap; }
+  .event-chip.up    { color: var(--green); }
+  .event-chip.down  { color: var(--red); }
+  .event-chip.tag   { color: var(--accent); background: rgba(34,211,238,0.07); border-color: rgba(34,211,238,0.2); }
+  .event-chip.sus   { color: var(--red); background: rgba(240,82,82,0.07); border-color: rgba(240,82,82,0.2); }
+  .event-chip.warn  { color: var(--yellow); background: rgba(245,158,11,0.07); border-color: rgba(245,158,11,0.2); }
+  .event-chip.clust { color: var(--purple); background: rgba(155,126,248,0.07); border-color: rgba(155,126,248,0.2); }
+  .event-bars { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-top: 4px; }
+  .event-bar { display: flex; flex-direction: column; gap: 2px; }
+  .event-bar-label { font-size: 8px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+  .event-bar-track { height: 4px; background: var(--border); border-radius: 2px; overflow: hidden; }
+  .event-bar-fill { height: 100%; border-radius: 2px; transition: width 0.3s; }
+  .timeline-back { font-size: 10px; color: var(--accent); cursor: pointer; margin-bottom: 8px; display: inline-flex; align-items: center; gap: 4px; user-select: none; }
+  .timeline-back:hover { text-decoration: underline; }
 </style>
 </head>
 <body>
@@ -364,6 +393,12 @@ function renderStats(data) {
   document.getElementById('statTrades').textContent       = fmtNum(data.total_trades||0);
   document.getElementById('statAnomalies24h').textContent = data.anomalies_24h||0;
   document.getElementById('statTotal').textContent        = data.total_anomalies||0;
+  // Make clusters count clickable to switch to clusters view
+  const clustersEl = document.getElementById('statClusters');
+  clustersEl.style.cursor = 'pointer';
+  clustersEl.title = 'Click to view clusters';
+  clustersEl.onclick = () => switchToClusters(document.querySelector('.cluster-tab'));
+  
   const el = document.getElementById('catList');
   if (!data.by_category?.length) { el.innerHTML='<div style="padding:14px;color:var(--muted);font-size:10px;">No data</div>'; return; }
   el.innerHTML = data.by_category.map(c => {
@@ -575,49 +610,87 @@ function selectCluster(i) {
   selectedClusterKey = c.ticker+'|'+c.first_seen_time;
   renderClusters();
 
-  const color  = clusterColor(c.cluster_score);
-  const cons   = c.directional_consistency || 0;
-  const consW  = Math.round(cons * 100);
-  const trend  = c.score_trend || 0;
-  const trendW = Math.min(100, Math.abs(trend) * 5);
-  const trendCol = trend > 5 ? 'var(--red)' : trend < -5 ? 'var(--green)' : 'var(--muted)';
-  const span   = spanLabel(c.first_seen_time, c.last_seen_time);
-  const url    = `https://kalshi.com/markets/${(c.series_ticker||c.ticker||'').toLowerCase()}`;
+  // Load cluster events from API
+  loadClusterEvents(c.ticker, c.first_seen_ts);
+}
+
+async function loadClusterEvents(ticker, firstSeenTs) {
+  try {
+    const resp = await fetch(`/api/cluster/${encodeURIComponent(ticker)}/${firstSeenTs}/events`);
+    const events = await resp.json();
+    // Find the cluster object to pass to renderClusterTimeline
+    const cluster = allClusters.find(cl => cl.ticker === ticker && cl.first_seen_ts === firstSeenTs);
+    if (cluster) {
+      renderClusterTimeline(cluster, events);
+    }
+  } catch (e) {
+    console.error('Failed to load cluster events:', e);
+    const cluster = allClusters.find(cl => cl.ticker === ticker && cl.first_seen_ts === firstSeenTs);
+    if (cluster) {
+      renderClusterTimeline(cluster, []);
+    }
+  }
+}
+
+function renderClusterTimeline(cluster, events) {
+  const color  = clusterColor(cluster.cluster_score);
+  const cons   = cluster.directional_consistency || 0;
+  const trend  = cluster.score_trend || 0;
+  const span   = spanLabel(cluster.first_seen_time, cluster.last_seen_time);
+  const url    = `https://kalshi.com/markets/${(cluster.series_ticker||cluster.ticker||'').toLowerCase()}`;
+
+  let eventsHtml = '';
+  if (events.length === 0) {
+    eventsHtml = '<div class="detail-empty">No anomaly events found for this cluster.</div>';
+  } else {
+    eventsHtml = events.map(e => {
+      const sc = Math.round(e.anomaly_score);
+      const scCol = sc >= 100 ? 'red' : 'yellow';
+      const delta = e.price_current - e.price_before;
+      const up = delta >= 0;
+      const pct = e.price_before > 0 ? ((Math.abs(delta)/e.price_before)*100).toFixed(1) : '0.0';
+      const volZ = Math.min(100, Math.max(0, (e.volume_zscore/15)*100));
+      const blockR = Math.min(100, (e.block_trade_ratio||0)*100);
+      const priceJ = Math.min(100, Math.abs(delta)*500);
+      const timeStr = new Date(e.detected_time).toLocaleString();
+      
+      return `<div class="event-row">
+        <div class="event-time">${timeStr}</div>
+        <div class="event-main">
+          <div class="event-meta">
+            <span class="event-chip tag">${e.trigger_type||''}</span>
+            <span class="event-chip ${up?'up':'down'}">${up?'▲':'▼'} ${pct}%</span>
+            <span class="event-chip">vol_z: ${e.volume_zscore?.toFixed(1)||'0'}</span>
+            <span class="event-chip">block: ${((e.block_trade_ratio||0)*100).toFixed(0)}%</span>
+            ${(e.directional_flag || 0) > 0.1 ? '<span class="event-chip warn">dir. NO</span>' : ''}
+          </div>
+          <div class="event-bars">
+            <div class="event-bar"><div class="event-bar-label">Vol Z</div><div class="event-bar-track"><div class="event-bar-fill" style="width:${volZ}%;background:var(--accent)"></div></div></div>
+            <div class="event-bar"><div class="event-bar-label">Block</div><div class="event-bar-track"><div class="event-bar-fill" style="width:${blockR}%;background:var(--purple)"></div></div></div>
+            <div class="event-bar"><div class="event-bar-label">Price Δ</div><div class="event-bar-track"><div class="event-bar-fill" style="width:${priceJ}%;background:var(--yellow)"></div></div></div>
+          </div>
+        </div>
+        <div class="event-score ${scCol}">${sc}</div>
+      </div>`;
+    }).join('');
+  }
 
   document.getElementById('detailPanel').innerHTML = `
     <div class="detail-block">
       <div class="detail-key">Cluster Score</div>
-      <div class="detail-score ${color}">${Math.round(c.cluster_score)}</div>
-      <div style="font-size:10px;color:var(--muted);margin-top:4px">${c.anomaly_count} anomalies · ${span}</div>
+      <div class="detail-score ${color}">${Math.round(cluster.cluster_score)}</div>
+      <div style="font-size:10px;color:var(--muted);margin-top:4px">${cluster.anomaly_count} anomalies · ${span}</div>
     </div>
     <div class="detail-block">
       <div class="detail-key">Market</div>
-      <div class="detail-val" style="font-size:11px;line-height:1.6">${c.market_title||c.ticker}</div>
+      <div class="detail-val" style="font-size:11px;line-height:1.6">${cluster.market_title||cluster.ticker}</div>
       <div style="margin-top:8px"><a href="${url}" target="_blank" class="kalshi-link">↗ View on Kalshi</a></div>
     </div>
     <div class="detail-block">
-      <div class="detail-key">Pattern Analysis</div>
-      <div class="bar-grid">
-        <div class="bar-row"><div class="bar-lbl">Directional</div><div class="bar-track"><div class="bar-fill" style="width:${consW}%;background:${cons>=0.7?'var(--red)':'var(--yellow)'}"></div></div><div class="bar-num">${consW}%</div></div>
-        <div class="bar-row"><div class="bar-lbl">Escalation</div><div class="bar-track"><div class="bar-fill" style="width:${trendW}%;background:${trendCol}"></div></div><div class="bar-num">${trend>0?'+':''}${trend.toFixed(1)}</div></div>
-        <div class="bar-row"><div class="bar-lbl">Peak score</div><div class="bar-track"><div class="bar-fill" style="width:${Math.min(100,c.peak_score)}%;background:var(--accent)"></div></div><div class="bar-num">${Math.round(c.peak_score)}</div></div>
-      </div>
+      <div class="detail-key">Event Timeline (${events.length} events)</div>
+      ${eventsHtml}
     </div>
-    <div class="detail-block">
-      <div class="detail-key">Interpretation</div>
-      <div class="cluster-box">◈ ${c.anomaly_count} anomaly events detected${cons>=0.7?' with consistent directional bias — possible systematic accumulation':cons>=0.5?' with moderate directional consistency':' with mixed directionality — may be noise'}. ${trend>5?'Scores are escalating — pattern intensifying.':trend<-5?'Scores are declining.':'Score level is stable.'}</div>
-    </div>
-    <div class="detail-block">
-      <div class="detail-key">MNPI Risk Actors</div>
-      <div class="risk-box">⚠ ${c.mnpi_actors||'Unknown'}</div>
-    </div>
-    <div class="detail-block">
-      <div class="detail-key">Timeline</div>
-      <div class="detail-val" style="font-size:10px;line-height:1.8">
-        First: ${new Date(c.first_seen_time).toLocaleString()}<br>
-        Last:  ${new Date(c.last_seen_time).toLocaleString()}
-      </div>
-    </div>`;
+  `;
 }
 
 async function loadAll() {

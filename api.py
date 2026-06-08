@@ -151,3 +151,18 @@ def refresh_clusters(lookback_days: int = 30):
     """
     count = run_cluster_scorer(lookback_days=lookback_days)
     return JSONResponse({"clusters_written": count, "lookback_days": lookback_days})
+
+
+@app.get("/api/cluster/{ticker}/{first_seen_ts}/events")
+def get_cluster_events(ticker: str, first_seen_ts: int):
+    """Return all anomaly events within a specific cluster.
+    
+    Path params:
+        ticker         Market ticker (e.g. KXNEXTAG-29-TBLA)
+        first_seen_ts  Cluster start timestamp (from clusters table)
+    
+    Returns list of anomaly events with full signal breakdown,
+    ordered chronologically.
+    """
+    rows = db.get_cluster_events(ticker, first_seen_ts)
+    return JSONResponse(rows)

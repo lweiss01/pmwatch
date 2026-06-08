@@ -289,7 +289,8 @@ def get_clusters(min_count: int = 2, limit: int = 50, active_days: int = 30) -> 
     c.execute("""
         SELECT
             ticker, series_ticker, market_title, risk_group, mnpi_actors,
-            first_seen_time, last_seen_time, anomaly_count,
+            first_seen_ts, first_seen_time, last_seen_ts, last_seen_time,
+            anomaly_count,
             peak_score, total_score, directional_consistency,
             score_trend, cluster_score, trigger_types
         FROM clusters
@@ -315,6 +316,49 @@ def get_ticker_cluster_history(ticker: str) -> list:
         WHERE ticker = ?
         ORDER BY last_seen_ts DESC
     """, (ticker,))
+    rows = [dict(r) for r in c.fetchall()]
+    conn.close()
+    return rows
+
+
+def get_cluster_events(ticker: str, first_seen_ts: int) -> list:
+    """Return all anomaly events belonging to a specific cluster.
+    
+    A cluster is defined by ticker + first_seen_ts (from clusters table).
+    We find all anomalies for that ticker within the cluster's time window.
+    """
+    conn = get_conn()
+    c = conn.cursor()
+    
+    # First get the cluster's time bounds
+    c.execute("""
+        SELECT first_seen_ts, last_seen_ts
+        FROM clusters
+        WHERE ticker = ? AND first_seen_ts = ?
+    """, (ticker, first_seen_ts))
+    cluster = c.fetchone()
+    
+    if not cluster:
+        conn.close()
+        return []
+    
+    first_ts = cluster["first_seen_ts"]
+    last_ts = cluster["last_seen_ts"]
+    
+    # Get all anomalies for this ticker within the cluster window
+    c.execute("""
+        SELECT
+            id, ticker, market_title, series_ticker, risk_group, mnpi_actors,
+            detected_ts, detected_time, anomaly_score, volume_zscore,
+            block_trade_ratio, directional_flag, trigger_type,
+            price_before, price_current, volume_in_window, notes
+        FROM anomalies
+        WHERE ticker = ?
+          AND detected_ts >= ?
+          AND detected_ts <= ?
+        ORDER BY detected_ts ASC
+    """, (ticker, first_ts, last_ts))
+    
     rows = [dict(r) for r in c.fetchall()]
     conn.close()
     return rows
