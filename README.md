@@ -102,6 +102,35 @@ The Clusters tab in the dashboard shows all active clusters sorted by cluster sc
 
 ---
 
+## Advanced Forensic Features
+
+### 1. Real-Time Political News Ingestion & Confidence Weighting
+To detect potential information leakage, `pmwatch` integrates a multi-source news parser that tracks public events and maps them directly to watched prediction market series.
+* **Legislative / Statutory Triggers:** Congress.gov feeds tracking 'Bills Presented to the President' and 'On the Floor Today'. Users can supply custom GPO GovInfo query URLs (`govinfo.gov/feeds`) to monitor specific house bills or committee reports.
+* **Executive / Regulatory Shocks:** FederalRegister.gov API JSON notice parser filtering by Agency and Topic. Also supports tracking White House OMB (Office of Management and Budget) statements and news releases.
+* **Macro / Financial Overlays:** TreasuryDirect Offering/Auction announcements and Federal Reserve Board press releases.
+* **Source-Type Weighting:** Official government and regulatory updates (`primary_gov`) receive a **1.5x multiplier** on correlation confidence scores, whereas mainstream media news (`mainstream_news`) receives a **1.0x multiplier**. This highlights anomalies triggered directly by policy actions before they reach media aggregators.
+
+### 2. High-Frequency Microstructure Watcher
+In addition to rolling metrics, `pmwatch` tracks depth-of-book data stream updates to detect sub-minute manipulation signatures.
+* **WebSocket Delta Feed:** Subscribes to Kalshi's V2 `orderbook_delta` WebSocket channel.
+* **In-Memory Deque Buffers:** To prevent database bottlenecks, depth updates are cached in thread-safe `collections.deque(maxlen=1000)` per active market.
+* **Spoofing Alert Heuristic:** Identifies bid/ask "walls" ($\ge$ 95th percentile of historical depth, e.g., $\ge 1,000$ contracts). Flags a spoofing cancellation if the wall is removed ($\ge 80\%$ volume drop) within 120 seconds *without* execution fills, immediately followed by large opposite-side trades.
+* **Wash Trading Alert Heuristic:** Scans trades inside a rolling 1-minute window to identify opposite-side trades with matching quantities (within 1% tolerance) executed within 30 seconds of each other.
+
+### 3. Whale Behavior Tracker
+Large capital pre-positioning is segmented and tracked over time.
+* **Dynamic Trade Profiling:** Computes the 99th percentile trade size dynamically per market to identify whale transactions.
+* **Exposure Flow:** Roll up YES vs. NO whale volumes hourly into net exposure profiles.
+* **Visual SVG Charts:** Renders interactive, pure-SVG net exposure charts overlaying the contract price timeline directly in the dashboard drill-down panel.
+
+### 4. Memory & Performance Optimizations
+* **NumPy Vectorization:** Vectorized Z-score, rolling means, and price divergence algorithms inside `scorer.py` using NumPy to ensure low overhead on Python's single-threaded event loop.
+* **UI State Preservation:** Decoupled background data loading from page navigation. Background refreshes preserve active card selection states (`selectedId`), list highlighted states, and detail views.
+* **Past Countdown Loop Protection:** Prevents infinite loop refreshes when `next_run` is in the past by caching loaded slots and gracefully displaying `pending...` when delays occur.
+
+---
+
 ## Current Signals (as of first run, June 3 2026)
 
 | Market | Score | Signal | MNPI Risk |
@@ -242,6 +271,7 @@ Requires Python 3.10+. No API key needed -- all endpoints used are public.
 - [x] Live Primary Government Ingestion & Correlation (Federal Register API, Congress.gov RSS, OMB Releases, TreasuryDirect)
 - [x] High-frequency Microstructure Watcher (Stateful L2 spoofing & wash trading checks)
 - [x] Dynamic Whale Flow Profiling & SVG charts (99th percentile hourly net position rollups)
+- [x] Local-first performance & memory optimization (NumPy vectors, WebSocket cache deques, selection preservation)
 - [ ] Social media correlation (cross-reference X posts with trade anomalies)
 - [ ] Email/webhook alerts on high cluster scores
 - [ ] Polymarket support
