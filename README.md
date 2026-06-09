@@ -159,27 +159,36 @@ as attorney general.
 
 ## Architecture
 
-    watchmarket_watchlist.json   # 33 monitored series with MNPI risk annotations
-    collector.py                 # Polls Kalshi API every 60 min, stores trades + candlesticks
-    scorer.py                    # Z-score + block trade + price divergence anomaly detection
-    cluster_scorer.py            # Gap-based clustering of anomalies; directional + trend scoring
-    db.py                        # SQLite schema and query helpers (anomalies + clusters tables)
-    scheduler.py                 # APScheduler wrapper: collect → score → cluster, every 60 min
-    api.py                       # FastAPI backend serving dashboard and JSON endpoints
-    dashboard.html               # Single-file dark-mode monitoring UI with Clusters tab
+```
+watchmarket_watchlist.json   # 33 monitored series with MNPI risk annotations
+collector.py                 # Ingests trades/candlesticks, profiles whale flows & rolls up stats
+scorer.py                    # NumPy-vectorized statistical engine (Z-score, block, price jumps)
+cluster_scorer.py            # Gap-based clustering of anomalies; directional & trend scoring
+news_engine.py               # Feed manager for Congress.gov RSS, GPO GovInfo, Fed, FR, OMB, & Treasury
+microstructure_watcher.py    # Stateful L2 spoofing & wash trading detector using local memory buffers
+db.py                        # SQLite schema & query helpers (anomalies, clusters, news, alerts, stats)
+scheduler.py                 # Multi-cadence engine: news (15m), whale flow (1h), microstructure (15s)
+api.py                       # FastAPI backend serving dashboard and JSON endpoints
+dashboard.html               # Premium dark terminal analytics UI (SVG whale charts, correlation timelines)
+```
 
 ---
 
 ## API Endpoints
 
-    GET  /api/anomalies           # Recent anomaly events, sorted by time
-    GET  /api/clusters            # Active clusters sorted by cluster_score
-    GET  /api/market/{ticker}/clusters   # Cluster history for a specific market
-    GET  /api/cluster/{ticker}/{first_seen_ts}/events  # Anomaly events within a cluster
-    POST /api/clusters/refresh    # Re-run cluster scorer on demand
-    GET  /api/markets             # All watched markets with current price/volume
-    GET  /api/stats               # Summary stats and category breakdown
-    GET  /api/market/{ticker}/trades     # Raw trade history for a market
+```
+GET  /api/anomalies                  # Recent anomaly events, sorted by time
+GET  /api/clusters                   # Active clusters sorted by cluster_score
+GET  /api/market/{ticker}/clusters          # Cluster history for a specific market
+GET  /api/cluster/{ticker}/{first_seen_ts}/events # Anomaly events within a cluster
+POST /api/clusters/refresh           # Re-run cluster scorer on demand
+GET  /api/markets                    # All watched markets with current price/volume
+GET  /api/stats                      # Summary stats and category breakdown
+GET  /api/market/{ticker}/trades            # Raw trade history for a market
+GET  /api/microstructure/alerts      # Real-time L2 spoofing and wash trading alerts
+GET  /api/correlations               # News-to-anomaly event correlation mappings
+GET  /api/market/{ticker}/whale-flow # Hourly YES/NO whale volume flow time-series
+```
 
 ---
 
@@ -196,12 +205,29 @@ as attorney general.
 
 ## Setup
 
-    git clone https://github.com/lweiss01/pmwatch.git
-    cd pmwatch
-    pip install -r requirements.txt
-    python db.py                  # initialize database (creates anomalies + clusters tables)
-    python scheduler.py           # start collection + scoring loop (runs every 60 min)
-    uvicorn api:app --port 8000   # start dashboard API
+1. Clone and install dependencies:
+```bash
+git clone https://github.com/lweiss01/pmwatch.git
+cd pmwatch
+pip install -r requirements.txt
+```
+
+2. Initialize the SQLite database (creates schema for anomalies, clusters, news, and alerts):
+```bash
+python db.py
+```
+
+3. Start the multi-cadence scheduler daemon:
+```bash
+python scheduler.py
+```
+*Note: The scheduler handles live news ingestion every 15 minutes, whale statistics hourly, and microstructure scans every 15 seconds.*
+
+4. Launch the FastAPI server hosting the API and analytics terminal:
+```bash
+python -m uvicorn api:app --port 8000
+```
+Open [http://127.0.0.1:8000](http://127.0.0.1:8000) in your browser.
 
 Requires Python 3.10+. No API key needed -- all endpoints used are public.
 
@@ -213,7 +239,9 @@ Requires Python 3.10+. No API key needed -- all endpoints used are public.
 - [x] Gap-based cluster analysis with directional consistency and trend scoring
 - [x] Clusters tab in dashboard with pattern interpretation
 - [x] Timeline drill-down: individual anomaly events within a cluster
-- [ ] Government calendar integration (BLS release schedule, FOMC dates)
+- [x] Live Primary Government Ingestion & Correlation (Federal Register API, Congress.gov RSS, OMB Releases, TreasuryDirect)
+- [x] High-frequency Microstructure Watcher (Stateful L2 spoofing & wash trading checks)
+- [x] Dynamic Whale Flow Profiling & SVG charts (99th percentile hourly net position rollups)
 - [ ] Social media correlation (cross-reference X posts with trade anomalies)
 - [ ] Email/webhook alerts on high cluster scores
 - [ ] Polymarket support

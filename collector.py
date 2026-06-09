@@ -5,6 +5,7 @@ import requests
 from datetime import datetime, timezone
 from pathlib import Path
 import db
+import config
 
 # --- Config ---
 BASE_URL = "https://api.elections.kalshi.com/trade-api/v2"
@@ -71,11 +72,10 @@ def fetch_markets_for_series(series_ticker: str) -> list:
 
 
 # --- Trade Fetcher ---
-def fetch_recent_trades(ticker: str) -> list:
+def fetch_recent_trades(ticker: str, max_pages: int = 10) -> list:
     trades = []
     cursor = ""
     pages = 0
-    max_pages = 10  # cap at 10000 trades per market per run
 
     while pages < max_pages:
         params = {"ticker": ticker, "limit": 1000}
@@ -91,7 +91,7 @@ def fetch_recent_trades(ticker: str) -> list:
         for t in raw:
             created_time = t.get("created_time", "")
             try:
-                dt = datetime.fromisoformat(created_time.replace("Z", "+00:00"))
+                dt = config.parse_iso_datetime(created_time)
                 created_ts = int(dt.timestamp())
             except Exception:
                 created_ts = 0
@@ -107,14 +107,79 @@ def fetch_recent_trades(ticker: str) -> list:
                 "created_time": created_time,
                 "created_ts": created_ts
             })
-
-        cursor = data.get("cursor", "")
+        
         pages += 1
-
-        if not cursor:
+        cursor = data.get("cursor", "")
+        if not cursor or len(raw) < 1000:
             break
 
     return trades
+
+# --- Whale Stats Rollup ---
+def rollup_whale_stats_for_market(ticker: str):
+    """Calculate whale trade statistics and save hourly rollups to the database."""
+    conn = db.get_conn()
+    c = conn.cursor()
+    
+    # 1. Fetch all trades to calculate 99th percentile
+    c.execute("SELECT count_fp FROM trades WHERE ticker = ? ORDER BY count_fp ASC", (ticker,))
+    rows = c.fetchall()
+    if not rows:
+        conn.close()
+        return
+        
+    sizes = [r[0] for r in rows]
+    idx = int(len(sizes) * 0.99)
+    # Threshold is 99th percentile, with a floor of 1000 contracts
+    threshold = max(1000.0, sizes[idx])
+    
+    # 2. Fetch trades in the last 7 days to roll up hourly stats
+    cutoff_ts = int(time.time()) - (7 * 86400)
+    c.execute("""
+        SELECT created_ts, count_fp, taker_side, is_block_trade 
+        FROM trades 
+        WHERE ticker = ? AND created_ts >= ?
+    """, (ticker, cutoff_ts))
+    recent_trades = c.fetchall()
+    conn.close()
+    
+    if not recent_trades:
+        return
+        
+    # Group by hour timestamp
+    hourly_groups = {}
+    for created_ts, count_fp, taker_side, is_block_trade in recent_trades:
+        hour_ts = (created_ts // 3600) * 3600
+        if hour_ts not in hourly_groups:
+            hourly_groups[hour_ts] = []
+        hourly_groups[hour_ts].append((count_fp, taker_side, is_block_trade))
+        
+    # Aggregate and insert
+    for hour_ts, trades_in_hour in hourly_groups.items():
+        yes_vol = 0.0
+        no_vol = 0.0
+        blocks = 0
+        
+        for count_fp, taker_side, is_block_trade in trades_in_hour:
+            is_whale = (count_fp >= threshold) or (is_block_trade == 1)
+            if is_block_trade == 1:
+                blocks += 1
+            if is_whale:
+                if taker_side == "yes":
+                    yes_vol += count_fp
+                elif taker_side == "no":
+                    no_vol += count_fp
+                    
+        stats = {
+            "ticker": ticker,
+            "hour_ts": hour_ts,
+            "whale_yes_volume": yes_vol,
+            "whale_no_volume": no_vol,
+            "net_whale_exposure": yes_vol - no_vol,
+            "block_trade_count": blocks
+        }
+        db.insert_whale_stats(stats)
+
 
 # --- Candlestick Fetcher ---
 def fetch_candlesticks(series_ticker: str, market_ticker: str) -> list:
@@ -167,22 +232,48 @@ def fetch_candlesticks(series_ticker: str, market_ticker: str) -> list:
     return []  # silently skip if both paths fail
 
 
-# --- Main Collection Run ---
-def run_collection():
-    run_start = datetime.now(timezone.utc).isoformat()
-    log.info(f"=== Collection run started: {run_start} ===")
+def run_collection(fast: bool = False):
+    run_start = config.utc_now_iso()
+    log.info(f"=== Collection run started (fast={fast}): {run_start} ===")
 
     watchlist = load_watchlist()
     total_markets = 0
     total_trades = 0
     errors = []
 
+    if fast:
+        # Fast mode: Get already known open/active markets from DB to avoid fetching watchlist series
+        conn = db.get_conn()
+        c = conn.cursor()
+        c.execute("SELECT ticker, series_ticker, category, risk_group, mnpi_actors FROM watched_markets WHERE status = 'active'")
+        active_markets = [dict(row) for row in c.fetchall()]
+        conn.close()
+
+        # Group cached markets by series
+        active_markets_map = {}
+        for m in active_markets:
+            series = m["series_ticker"] if "series_ticker" in m else m["ticker"].split("-")[0]
+            if series not in active_markets_map:
+                active_markets_map[series] = []
+            active_markets_map[series].append(m)
+    else:
+        active_markets_map = None
+
     for entry in watchlist:
         series = entry["series"]
+        
+        # If fast mode, only process if we have known open markets for this series
+        if fast and (active_markets_map is None or series not in active_markets_map):
+            continue
+
         log.info(f"Fetching markets for series: {series} ({entry['name']})")
 
         try:
-            markets = fetch_markets_for_series(series)
+            if fast and active_markets_map is not None:
+                # Use cached markets from DB
+                markets = active_markets_map[series]
+            else:
+                markets = fetch_markets_for_series(series)
 
             if not markets:
                 log.info(f"  No open markets for {series}")
@@ -193,30 +284,47 @@ def run_collection():
                 if not ticker:
                     continue
 
-                # Store market in DB
-                db.upsert_market({
-                    "ticker": ticker,
-                    "series_ticker": series,
-                    "title": market.get("title", ""),
-                    "category": entry["category"],
-                    "risk_group": entry["name"],
-                    "mnpi_actors": entry["risk"],
-                    "open_time": market.get("open_time", ""),
-                    "close_time": market.get("close_time", ""),
-                    "volume_fp": float(market.get("volume_fp", 0)),
-                    "last_price_dollars": float(market.get("last_price_dollars", 0)),
-                    "status": market.get("status", ""),
-                    "last_seen": run_start
-                })
+                if not fast:
+                    # Store market in DB
+                    db.upsert_market({
+                        "ticker": ticker,
+                        "series_ticker": series,
+                        "title": market.get("title", ""),
+                        "category": entry["category"],
+                        "risk_group": entry["name"],
+                        "mnpi_actors": entry["risk"],
+                        "open_time": market.get("open_time", ""),
+                        "close_time": market.get("close_time", ""),
+                        "volume_fp": float(market.get("volume_fp", 0)),
+                        "last_price_dollars": float(market.get("last_price_dollars", 0)),
+                        "status": market.get("status", ""),
+                        "last_seen": run_start
+                    })
 
-                # Fetch and store trades
-                trades = fetch_recent_trades(ticker)
+                # Fetch and store trades (only 1 page in fast mode)
+                trades = fetch_recent_trades(ticker, max_pages=1 if fast else 10)
                 inserted = db.insert_trades(trades)
                 total_trades += inserted
+                
+                # Push trades to microstructure watcher in-memory cache
+                try:
+                    import microstructure_watcher
+                    microstructure_watcher.push_trades(ticker, trades)
+                except Exception as ex:
+                    log.error(f"Failed to push trades to cache: {ex}")
 
-                # Fetch and store candlesticks
-                candles = fetch_candlesticks(series, ticker)
-                db.insert_candlesticks(candles)
+                # Calculate and rollup whale stats
+                try:
+                    rollup_whale_stats_for_market(ticker)
+                except Exception as ex:
+                    log.error(f"Failed to rollup whale stats for {ticker}: {ex}")
+
+                # Fetch and store candlesticks (skip in fast mode)
+                if not fast:
+                    candles = fetch_candlesticks(series, ticker)
+                    db.insert_candlesticks(candles)
+                else:
+                    candles = []
 
                 log.info(f"  {ticker}: {len(trades)} trades, {len(candles)} candles, {inserted} new")
                 total_markets += 1

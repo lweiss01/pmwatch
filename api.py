@@ -1,7 +1,6 @@
 import sqlite3
 import logging
 import json
-import os
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -10,20 +9,11 @@ import db
 import collector
 import scorer
 from cluster_scorer import run_cluster_scorer
+import config
 
 log = logging.getLogger(__name__)
 
-# Load config for scheduler interval
-def load_config():
-    config_path = os.path.join(os.path.dirname(__file__), "config.json")
-    try:
-        with open(config_path, "r") as f:
-            return json.load(f)
-    except Exception:
-        return {"scheduler_interval_minutes": 60}
-
-CONFIG = load_config()
-SCHEDULER_INTERVAL = CONFIG.get("scheduler_interval_minutes", 60)
+SCHEDULER_INTERVAL = config.get_scheduler_interval()
 
 app = FastAPI(title="pmwatch", description="Prediction Market Anomaly Monitor")
 
@@ -111,10 +101,9 @@ def get_stats():
     next_run = None
     if last_run:
         try:
-            from datetime import datetime, timezone
-            last_run_dt = datetime.fromisoformat(last_run["run_time"].replace("Z", "+00:00"))
-            next_run_dt = last_run_dt.timestamp() + (SCHEDULER_INTERVAL * 60)
-            next_run = datetime.fromtimestamp(next_run_dt, tz=timezone.utc).isoformat()
+            last_run_dt = config.parse_iso_datetime(last_run["run_time"])
+            next_run_dt = last_run_dt.timestamp() + (config.get_scheduler_interval() * 60)
+            next_run = config.timestamp_to_iso(next_run_dt)
         except Exception:
             pass
 
@@ -136,7 +125,7 @@ def get_stats():
         "by_category": by_category,
         "last_run": last_run.get("run_time") if last_run else None,
         "next_run": next_run,
-        "scheduler_interval_minutes": SCHEDULER_INTERVAL
+        "scheduler_interval_minutes": config.get_scheduler_interval()
     })
 
 
@@ -194,24 +183,23 @@ def trigger_collection():
     with the run status. Check /api/stats for last_run update.
     """
     import threading
-    from datetime import datetime, timezone
-    
+
     def run_background():
         try:
-            log.info("Manual collection triggered via API")
-            collector.run_collection()
+            log.info("Manual collection triggered via API (fast=True)")
+            collector.run_collection(fast=True)
             scorer.run_scorer()
-            cluster_scorer.run_cluster_scorer()
+            run_cluster_scorer()
         except Exception as e:
             log.error(f"Manual collection failed: {e}")
-    
+
     thread = threading.Thread(target=run_background, daemon=True)
     thread.start()
-    
+
     return JSONResponse({
         "status": "started",
-        "message": "Collection run triggered in background. Check dashboard in ~15-20 minutes.",
-        "triggered_at": datetime.now(timezone.utc).isoformat()
+        "message": "Manual collection run triggered. Updates will appear in a few seconds!",
+        "triggered_at": config.utc_now_iso()
     })
 
 
@@ -227,4 +215,32 @@ def get_cluster_events(ticker: str, first_seen_ts: int):
     ordered chronologically.
     """
     rows = db.get_cluster_events(ticker, first_seen_ts)
+    return JSONResponse(rows)
+
+
+@app.get("/api/microstructure/alerts")
+def get_microstructure_alerts(limit: int = 50):
+    """Return recent microstructure alerts (spoofing and wash trading)."""
+    rows = db.get_microstructure_alerts(limit=limit)
+    # Deserialize details JSON for the response
+    for row in rows:
+        if "details" in row and isinstance(row["details"], str):
+            try:
+                row["details"] = json.loads(row["details"])
+            except Exception:
+                pass
+    return JSONResponse(rows)
+
+
+@app.get("/api/correlations")
+def get_correlations(limit: int = 50):
+    """Return recent news-to-anomaly event correlations."""
+    rows = db.get_correlations(limit=limit)
+    return JSONResponse(rows)
+
+
+@app.get("/api/market/{ticker}/whale-flow")
+def get_whale_flow(ticker: str, limit: int = 100):
+    """Return hourly whale trade rollups for charting."""
+    rows = db.get_whale_flow(ticker, limit=limit)
     return JSONResponse(rows)

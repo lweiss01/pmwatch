@@ -103,6 +103,7 @@ def init_db():
         CREATE INDEX IF NOT EXISTS idx_clusters_ticker ON clusters(ticker);
         CREATE INDEX IF NOT EXISTS idx_clusters_score  ON clusters(cluster_score DESC);
         CREATE INDEX IF NOT EXISTS idx_clusters_last   ON clusters(last_seen_ts  DESC);
+        CREATE INDEX IF NOT EXISTS idx_clusters_count_last ON clusters(anomaly_count, last_seen_ts DESC);
 
         CREATE TABLE IF NOT EXISTS collection_log (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -111,6 +112,59 @@ def init_db():
             trades_collected INTEGER,
             anomalies_flagged INTEGER,
             errors TEXT
+        );
+
+        -- News articles database table
+        CREATE TABLE IF NOT EXISTS news_articles (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT NOT NULL,
+            description TEXT,
+            url TEXT UNIQUE NOT NULL,
+            published_time TEXT NOT NULL,
+            published_ts INTEGER NOT NULL,
+            source TEXT NOT NULL,
+            source_type TEXT NOT NULL,
+            series_ticker TEXT,
+            ingested_ts INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_news_pub_ts ON news_articles(published_ts DESC);
+        CREATE INDEX IF NOT EXISTS idx_news_series ON news_articles(series_ticker);
+
+        -- Correlation mapping table
+        CREATE TABLE IF NOT EXISTS news_correlations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            anomaly_id INTEGER,
+            cluster_first_seen_ts INTEGER,
+            ticker TEXT NOT NULL,
+            news_id INTEGER NOT NULL,
+            lead_time_seconds INTEGER NOT NULL,
+            confidence_score REAL NOT NULL,
+            notes TEXT,
+            FOREIGN KEY(news_id) REFERENCES news_articles(id),
+            UNIQUE(ticker, anomaly_id, news_id)
+        );
+
+        -- Microstructure alerts table
+        CREATE TABLE IF NOT EXISTS microstructure_alerts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ticker TEXT NOT NULL,
+            timestamp INTEGER NOT NULL,
+            time_str TEXT NOT NULL,
+            alert_type TEXT NOT NULL,
+            severity_score REAL NOT NULL,
+            details TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_micro_ticker ON microstructure_alerts(ticker, timestamp DESC);
+
+        -- Whale hourly rollups table
+        CREATE TABLE IF NOT EXISTS whale_hourly_stats (
+            ticker TEXT NOT NULL,
+            hour_ts INTEGER NOT NULL,
+            whale_yes_volume REAL DEFAULT 0,
+            whale_no_volume REAL DEFAULT 0,
+            net_whale_exposure REAL DEFAULT 0,
+            block_trade_count INTEGER DEFAULT 0,
+            PRIMARY KEY (ticker, hour_ts)
         );
     """)
 
@@ -284,6 +338,53 @@ def upsert_cluster(cluster: dict):
     conn.close()
 
 
+def upsert_clusters_bulk(clusters: list):
+    """Bulk upsert multiple clusters in a single transaction."""
+    if not clusters:
+        return 0
+    conn = get_conn()
+    c = conn.cursor()
+    written = 0
+    try:
+        for cluster in clusters:
+            c.execute("""
+                INSERT INTO clusters (
+                    ticker, series_ticker, market_title, risk_group, mnpi_actors,
+                    first_seen_ts, first_seen_time, last_seen_ts, last_seen_time,
+                    anomaly_count, peak_score, total_score, directional_consistency,
+                    score_trend, cluster_score, trigger_types, has_block_trades,
+                    computed_time, computed_ts
+                ) VALUES (
+                    :ticker, :series_ticker, :market_title, :risk_group, :mnpi_actors,
+                    :first_seen_ts, :first_seen_time, :last_seen_ts, :last_seen_time,
+                    :anomaly_count, :peak_score, :total_score, :directional_consistency,
+                    :score_trend, :cluster_score, :trigger_types, :has_block_trades,
+                    :computed_time, :computed_ts
+                )
+                ON CONFLICT(ticker, first_seen_ts) DO UPDATE SET
+                    last_seen_ts            = excluded.last_seen_ts,
+                    last_seen_time          = excluded.last_seen_time,
+                    anomaly_count           = excluded.anomaly_count,
+                    peak_score              = excluded.peak_score,
+                    total_score             = excluded.total_score,
+                    directional_consistency = excluded.directional_consistency,
+                    score_trend             = excluded.score_trend,
+                    cluster_score           = excluded.cluster_score,
+                    trigger_types           = excluded.trigger_types,
+                    has_block_trades        = excluded.has_block_trades,
+                    computed_time           = excluded.computed_time,
+                    computed_ts             = excluded.computed_ts
+            """, cluster)
+            written += 1
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+    return written
+
+
 def get_clusters(min_count: int = 2, limit: int = 50, active_days: int = 30) -> list:
     conn = get_conn()
     c = conn.cursor()
@@ -364,6 +465,152 @@ def get_cluster_events(ticker: str, first_seen_ts: int) -> list:
     rows = [dict(r) for r in c.fetchall()]
     conn.close()
     return rows
+
+
+def insert_news_articles(articles: list) -> int:
+    if not articles:
+        return 0
+    conn = get_conn()
+    c = conn.cursor()
+    inserted = 0
+    for a in articles:
+        try:
+            c.execute("""
+                INSERT OR IGNORE INTO news_articles
+                    (title, description, url, published_time, published_ts,
+                     source, source_type, series_ticker, ingested_ts)
+                VALUES
+                    (:title, :description, :url, :published_time, :published_ts,
+                     :source, :source_type, :series_ticker, :ingested_ts)
+            """, a)
+            inserted += c.rowcount
+        except sqlite3.Error:
+            pass
+    conn.commit()
+    conn.close()
+    return inserted
+
+
+def get_recent_news_articles(limit: int = 50) -> list:
+    conn = get_conn()
+    c = conn.cursor()
+    c.execute("""
+        SELECT * FROM news_articles
+        ORDER BY published_ts DESC
+        LIMIT ?
+    """, (limit,))
+    rows = [dict(r) for r in c.fetchall()]
+    conn.close()
+    return rows
+
+
+def insert_microstructure_alert(alert: dict):
+    conn = get_conn()
+    c = conn.cursor()
+    c.execute("""
+        INSERT INTO microstructure_alerts
+            (ticker, timestamp, time_str, alert_type, severity_score, details)
+        VALUES
+            (:ticker, :timestamp, :time_str, :alert_type, :severity_score, :details)
+    """, alert)
+    conn.commit()
+    conn.close()
+
+
+def get_microstructure_alerts(limit: int = 50) -> list:
+    conn = get_conn()
+    c = conn.cursor()
+    c.execute("""
+        SELECT * FROM microstructure_alerts
+        ORDER BY timestamp DESC
+        LIMIT ?
+    """, (limit,))
+    rows = [dict(r) for r in c.fetchall()]
+    conn.close()
+    return rows
+
+
+def insert_whale_stats(stats: dict):
+    conn = get_conn()
+    c = conn.cursor()
+    c.execute("""
+        INSERT OR REPLACE INTO whale_hourly_stats
+            (ticker, hour_ts, whale_yes_volume, whale_no_volume, net_whale_exposure, block_trade_count)
+        VALUES
+            (:ticker, :hour_ts, :whale_yes_volume, :whale_no_volume, :net_whale_exposure, :block_trade_count)
+    """, stats)
+    conn.commit()
+    conn.close()
+
+
+def get_whale_flow(ticker: str, limit: int = 100) -> list:
+    conn = get_conn()
+    c = conn.cursor()
+    c.execute("""
+        SELECT * FROM whale_hourly_stats
+        WHERE ticker = ?
+        ORDER BY hour_ts ASC
+        LIMIT ?
+    """, (ticker, limit))
+    rows = [dict(r) for r in c.fetchall()]
+    conn.close()
+    return rows
+
+
+def insert_correlation(correlation: dict):
+    conn = get_conn()
+    c = conn.cursor()
+    c.execute("""
+        INSERT OR IGNORE INTO news_correlations
+            (anomaly_id, cluster_first_seen_ts, ticker, news_id, lead_time_seconds, confidence_score, notes)
+        VALUES
+            (:anomaly_id, :cluster_first_seen_ts, :ticker, :news_id, :lead_time_seconds, :confidence_score, :notes)
+    """, correlation)
+    conn.commit()
+    conn.close()
+
+
+def get_correlations(limit: int = 50) -> list:
+    conn = get_conn()
+    c = conn.cursor()
+    c.execute("""
+        SELECT 
+            c.*, 
+            a.anomaly_score, 
+            a.volume_zscore, 
+            a.market_title, 
+            n.title as news_title, 
+            n.url as news_url, 
+            n.published_time as news_time, 
+            n.source as news_source,
+            n.source_type as news_source_type
+        FROM news_correlations c
+        LEFT JOIN anomalies a ON c.anomaly_id = a.id
+        JOIN news_articles n ON c.news_id = n.id
+        ORDER BY c.confidence_score DESC, c.id DESC
+        LIMIT ?
+    """, (limit,))
+    rows = [dict(r) for r in c.fetchall()]
+    conn.close()
+    return rows
+
+
+def prune_historical_data(order_book_days: int = 14, trade_days: int = 30):
+    import time as _time
+    now_ts = int(_time.time())
+    conn = get_conn()
+    c = conn.cursor()
+    
+    # Prune old trades
+    cutoff_trades = now_ts - (trade_days * 86400)
+    c.execute("DELETE FROM trades WHERE created_ts < ?", (cutoff_trades,))
+    
+    # Prune old microstructure alerts
+    cutoff_alerts = now_ts - (order_book_days * 86400)
+    c.execute("DELETE FROM microstructure_alerts WHERE timestamp < ?", (cutoff_alerts,))
+    
+    conn.commit()
+    conn.close()
 
 
 if __name__ == "__main__":

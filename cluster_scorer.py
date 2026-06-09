@@ -36,6 +36,7 @@ import time
 from datetime import datetime, timezone
 
 import db
+import config
 
 log = logging.getLogger(__name__)
 
@@ -179,7 +180,7 @@ def compute_cluster_record(ticker: str, events: list[dict]) -> dict:
         "cluster_score": cscore,
         "trigger_types": ",".join(sorted({e.get("trigger_type", "") for e in events_sorted})),
         "has_block_trades": 1 if has_block else 0,
-        "computed_time": datetime.now(timezone.utc).isoformat(),
+        "computed_time": config.utc_now_iso(),
         "computed_ts": int(time.time()),
     }
 
@@ -217,15 +218,14 @@ def run_cluster_scorer(lookback_days: int = 30) -> int:
     for evt in all_anomalies:
         by_ticker.setdefault(evt["ticker"], []).append(evt)
 
-    written = 0
+    records = []
     for ticker, events in by_ticker.items():
         raw_clusters = _group_into_clusters(events)
         for cluster_events in raw_clusters:
             if len(cluster_events) < MIN_CLUSTER_SIZE:
                 continue
             record = compute_cluster_record(ticker, cluster_events)
-            db.upsert_cluster(record)
-            written += 1
+            records.append(record)
             log.info(
                 "CLUSTER %s | count=%d | cluster_score=%.1f | "
                 "consistency=%.2f | trend=%+.2f | risk=%s",
@@ -236,6 +236,9 @@ def run_cluster_scorer(lookback_days: int = 30) -> int:
                 record["score_trend"],
                 record["risk_group"],
             )
+
+    # Bulk upsert all clusters in one transaction
+    written = db.upsert_clusters_bulk(records)
 
     log.info("=== Cluster scorer complete: %d clusters written ===", written)
     return written
