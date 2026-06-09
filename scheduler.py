@@ -1,5 +1,6 @@
 import logging
-import time
+import json
+import os
 from datetime import datetime, timezone
 from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.triggers.interval import IntervalTrigger
@@ -7,6 +8,18 @@ import db
 import collector
 import scorer
 import cluster_scorer
+
+# Load config
+def load_config():
+    config_path = os.path.join(os.path.dirname(__file__), "config.json")
+    try:
+        with open(config_path, "r") as f:
+            return json.load(f)
+    except Exception:
+        return {"scheduler_interval_minutes": 60}
+
+CONFIG = load_config()
+SCHEDULER_INTERVAL = CONFIG.get("scheduler_interval_minutes", 60)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -49,17 +62,17 @@ if __name__ == "__main__":
     log.info("Running initial collection on startup...")
     collect_and_score()
 
-    # Then schedule every 60 minutes
+    # Then schedule every N minutes (configurable)
     scheduler = BlockingScheduler(timezone="UTC")
     scheduler.add_job(
         collect_and_score,
-        trigger=IntervalTrigger(minutes=60),
+        trigger=IntervalTrigger(minutes=SCHEDULER_INTERVAL),
         id="collect_and_score",
         name="Collect and score Kalshi markets",
         misfire_grace_time=60
     )
 
-    log.info("Scheduler started -- running every 60 minutes. Ctrl+C to stop.")
+    log.info(f"Scheduler started -- running every {SCHEDULER_INTERVAL} minutes. Ctrl+C to stop.")
     try:
         scheduler.start()
     except KeyboardInterrupt:

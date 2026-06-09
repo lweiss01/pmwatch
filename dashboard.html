@@ -242,7 +242,8 @@
   <div class="header-right">
     <div class="live-badge"><div class="live-dot"></div>LIVE</div>
     <div class="hdr-time" id="lastUpdate">--</div>
-    <button class="hdr-btn" onclick="loadAll()">↻ Refresh</button>
+    <div class="hdr-time" id="runSchedule" style="color: var(--yellow); opacity: 0.8;">Loading schedule...</div>
+    <button class="hdr-btn" onclick="triggerManualRun()" style="color: var(--purple); border-color: var(--purple);">⚡ Manual Run</button>
   </div>
 </header>
 
@@ -292,6 +293,12 @@
       <div class="feed-tab" onclick="filterFeed('geopolitical',this)">Geo</div>
       <div class="feed-tab" onclick="filterFeed('congressional',this)">Congress</div>
       <div class="feed-tab cluster-tab" onclick="switchToClusters(this)">◈ Clusters</div>
+    </div>
+    <div class="feed-tabs" id="clusterSortTabs" style="display:none; justify-content: flex-start; gap: 4px; padding: 4px 16px; border-bottom: 1px solid var(--border);">
+      <div class="feed-tab active" onclick="setClusterSort('recency',this)" title="Most recent cluster activity first">🕐 Recency</div>
+      <div class="feed-tab" onclick="setClusterSort('score',this)" title="Highest cluster score first">📊 Score</div>
+      <div class="feed-tab" onclick="setClusterSort('count',this)" title="Most anomalies in cluster">📋 Count</div>
+      <div class="feed-tab" onclick="setClusterSort('category',this)" title="Group by risk category">🏷 Category</div>
     </div>
     <div class="feed-list" id="feedList">
       <div class="empty-state">
@@ -356,6 +363,7 @@ let selectedId   = null;
 let selectedClusterKey = null;
 let currentFilter = 'all';
 let viewMode      = 'anomalies';
+let clusterSort   = 'recency'; // recency | score | count | category
 
 function fmtNum(n) {
   if (n >= 1e6) return (n/1e6).toFixed(1)+'M';
@@ -388,7 +396,62 @@ function trendLabel(t) {
   return '→ flat';
 }
 
+let runCountdownInterval = null;
+function startRunCountdown(nextRunIso) {
+  if (runCountdownInterval) clearInterval(runCountdownInterval);
+  const runSchedule = document.getElementById('runSchedule');
+  const update = () => {
+    const stats = window.lastStatsData; // stored from renderStats
+    if (!stats?.last_run || !stats?.next_run) return;
+    const next = new Date(stats.next_run).getTime();
+    const now = Date.now();
+    const diff = next - now;
+    if (diff <= 0) {
+      runSchedule.innerHTML = 'Last run: ' + timeAgo(stats.last_run) + ' <span style="color:var(--green)">(refreshing...)</span>';
+      clearInterval(runCountdownInterval);
+      runCountdownInterval = null;
+      return;
+    }
+    const mins = Math.floor(diff / 60000);
+    const secs = Math.floor((diff % 60000) / 1000);
+    runSchedule.innerHTML = 'Last run: ' + timeAgo(stats.last_run) + 
+      ' <span style="color:var(--muted)">|</span> ' +
+      'Next run: <span style="color:var(--yellow)">' + mins + 'm ' + secs + 's</span>';
+  };
+  update();
+  runCountdownInterval = setInterval(update, 1000);
+}
+
+async function triggerManualRun() {
+  const btn = event.target;
+  const originalText = btn.textContent;
+  btn.textContent = '⏳ Running...';
+  btn.disabled = true;
+  btn.style.opacity = '0.7';
+  try {
+    const resp = await fetch('/api/collector/trigger', { method: 'POST' });
+    const data = await resp.json();
+    alert(data.message || 'Collection triggered!');
+  } catch (e) {
+    alert('Failed to trigger: ' + e.message);
+  } finally {
+    btn.textContent = originalText;
+    btn.disabled = false;
+    btn.style.opacity = '1';
+  }
+}
+
+function setClusterSort(mode, el) {
+  clusterSort = mode;
+  document.querySelectorAll('#clusterSortTabs .feed-tab').forEach(t => t.classList.remove('active'));
+  el.classList.add('active');
+  renderClusters();
+}
+
 function renderStats(data) {
+  // Store for countdown timer
+  window.lastStatsData = data;
+  
   document.getElementById('statMarkets').textContent      = fmtNum(data.total_markets||0);
   document.getElementById('statTrades').textContent       = fmtNum(data.total_trades||0);
   document.getElementById('statAnomalies24h').textContent = data.anomalies_24h||0;
@@ -398,7 +461,23 @@ function renderStats(data) {
   clustersEl.style.cursor = 'pointer';
   clustersEl.title = 'Click to view clusters';
   clustersEl.onclick = () => switchToClusters(document.querySelector('.cluster-tab'));
-  
+
+  // Update run schedule display
+  const runSchedule = document.getElementById('runSchedule');
+  if (data.last_run) {
+    const lastRunText = 'Last run: ' + timeAgo(data.last_run);
+    if (data.next_run) {
+      const nextRunText = ' · Next run: ' + timeAgo(data.next_run);
+      runSchedule.innerHTML = lastRunText + '<span style="color:var(--muted)"> | </span>' + nextRunText;
+      // Add countdown timer for next run
+      startRunCountdown(data.next_run);
+    } else {
+      runSchedule.textContent = lastRunText;
+    }
+  } else {
+    runSchedule.textContent = 'No runs yet';
+  }
+
   const el = document.getElementById('catList');
   if (!data.by_category?.length) { el.innerHTML='<div style="padding:14px;color:var(--muted);font-size:10px;">No data</div>'; return; }
   el.innerHTML = data.by_category.map(c => {
@@ -461,6 +540,7 @@ function filterFeed(filter, tabEl) {
   document.querySelectorAll('.cat-row').forEach(r => r.classList.remove('active'));
   document.getElementById('feedTitle').textContent = '⚡ Anomaly Feed';
   document.getElementById('detailHdr').textContent = 'Signal Detail';
+  document.getElementById('clusterSortTabs').style.display = 'none';
   renderFeed();
 }
 
@@ -471,6 +551,7 @@ function switchToClusters(tabEl) {
   document.querySelectorAll('.cat-row').forEach(r => r.classList.remove('active'));
   document.getElementById('feedTitle').textContent = '◈ Cluster Patterns';
   document.getElementById('detailHdr').textContent = 'Cluster Detail';
+  document.getElementById('clusterSortTabs').style.display = 'flex';
   renderClusters();
 }
 
@@ -527,14 +608,36 @@ function renderClusters() {
     return;
   }
 
-  list.innerHTML = allClusters.map((c, i) => {
+  // Sort clusters based on current sort mode
+  const sorted = [...allClusters].sort((a, b) => {
+    if (clusterSort === 'recency') {
+      return new Date(b.last_seen_time) - new Date(a.last_seen_time);
+    }
+    if (clusterSort === 'score') {
+      return (b.cluster_score || 0) - (a.cluster_score || 0);
+    }
+    if (clusterSort === 'count') {
+      return (b.anomaly_count || 0) - (a.anomaly_count || 0);
+    }
+    if (clusterSort === 'category') {
+      const catA = getCategory(a);
+      const catB = getCategory(b);
+      if (catA !== catB) return catA.localeCompare(catB);
+      return new Date(b.last_seen_time) - new Date(a.last_seen_time);
+    }
+    return 0;
+  });
+
+  list.innerHTML = sorted.map((c, i) => {
     const ckey  = c.ticker+'|'+c.first_seen_time;
     const sel   = ckey === selectedClusterKey ? ' cluster-selected' : '';
     const color = clusterColor(c.cluster_score);
     const cons  = consistencyLabel(c.directional_consistency||0);
     const trend = trendLabel(c.score_trend||0);
     const span  = spanLabel(c.first_seen_time, c.last_seen_time);
-    return `<div class="feed-item${sel}" onclick="selectCluster(${i})">
+    // Freshness of newest anomaly in cluster
+    const fresh = freshnessLabel(c.last_seen_time);
+    return `<div class="feed-item${sel}" onclick="selectCluster(${allClusters.indexOf(c)})">
       <div class="feed-item-main">
         <div class="feed-item-top">
           <div class="feed-ticker">${c.ticker}</div>
@@ -546,11 +649,21 @@ function renderClusters() {
           ${cons.cls ? `<span class="feed-chip ${cons.cls}">${cons.text}</span>` : `<span class="feed-chip">${cons.text}</span>`}
           <span class="feed-chip">${trend}</span>
           <span class="feed-chip">${span}</span>
+          <span class="feed-chip ${fresh.cls}">${fresh.text}</span>
         </div>
       </div>
       <div class="feed-score-col"><div class="feed-score ${color}">${Math.round(c.cluster_score)}</div></div>
     </div>`;
   }).join('');
+}
+
+function freshnessLabel(iso) {
+  if (!iso) return {text:'unknown', cls:''};
+  const d = (Date.now() - new Date(iso)) / 1000;
+  if (d < 3600)      return {text: 'fresh • ' + Math.floor(d/60)+'m', cls: 'up'};
+  if (d < 21600)     return {text: 'recent • ' + Math.floor(d/3600)+'h', cls: 'warn'};
+  if (d < 86400)     return {text: 'aging • ' + Math.floor(d/3600)+'h', cls: ''};
+  return {text: 'stale • ' + Math.floor(d/86400)+'d', cls: 'down'};
 }
 
 function selectSignal(id) {

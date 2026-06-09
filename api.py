@@ -1,10 +1,29 @@
 import sqlite3
+import logging
+import json
+import os
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pathlib import Path
 import db
+import collector
+import scorer
 from cluster_scorer import run_cluster_scorer
+
+log = logging.getLogger(__name__)
+
+# Load config for scheduler interval
+def load_config():
+    config_path = os.path.join(os.path.dirname(__file__), "config.json")
+    try:
+        with open(config_path, "r") as f:
+            return json.load(f)
+    except Exception:
+        return {"scheduler_interval_minutes": 60}
+
+CONFIG = load_config()
+SCHEDULER_INTERVAL = CONFIG.get("scheduler_interval_minutes", 60)
 
 app = FastAPI(title="pmwatch", description="Prediction Market Anomaly Monitor")
 
@@ -88,6 +107,17 @@ def get_stats():
     row = c.fetchone()
     last_run = dict(row) if row else {}
 
+    # Calculate next run time (using config interval)
+    next_run = None
+    if last_run:
+        try:
+            from datetime import datetime, timezone
+            last_run_dt = datetime.fromisoformat(last_run["run_time"].replace("Z", "+00:00"))
+            next_run_dt = last_run_dt.timestamp() + (SCHEDULER_INTERVAL * 60)
+            next_run = datetime.fromtimestamp(next_run_dt, tz=timezone.utc).isoformat()
+        except Exception:
+            pass
+
     c.execute("""
         SELECT risk_group, COUNT(*) as count, MAX(anomaly_score) as max_score
         FROM anomalies
@@ -103,7 +133,10 @@ def get_stats():
         "total_trades": total_trades,
         "total_anomalies": total_anomalies,
         "anomalies_24h": anomalies_24h,
-        "by_category": by_category
+        "by_category": by_category,
+        "last_run": last_run.get("run_time") if last_run else None,
+        "next_run": next_run,
+        "scheduler_interval_minutes": SCHEDULER_INTERVAL
     })
 
 
@@ -151,6 +184,35 @@ def refresh_clusters(lookback_days: int = 30):
     """
     count = run_cluster_scorer(lookback_days=lookback_days)
     return JSONResponse({"clusters_written": count, "lookback_days": lookback_days})
+
+
+@app.post("/api/collector/trigger")
+def trigger_collection():
+    """Manually trigger a collection + scoring run.
+    
+    Runs asynchronously in the background. Returns immediately
+    with the run status. Check /api/stats for last_run update.
+    """
+    import threading
+    from datetime import datetime, timezone
+    
+    def run_background():
+        try:
+            log.info("Manual collection triggered via API")
+            collector.run_collection()
+            scorer.run_scorer()
+            cluster_scorer.run_cluster_scorer()
+        except Exception as e:
+            log.error(f"Manual collection failed: {e}")
+    
+    thread = threading.Thread(target=run_background, daemon=True)
+    thread.start()
+    
+    return JSONResponse({
+        "status": "started",
+        "message": "Collection run triggered in background. Check dashboard in ~15-20 minutes.",
+        "triggered_at": datetime.now(timezone.utc).isoformat()
+    })
 
 
 @app.get("/api/cluster/{ticker}/{first_seen_ts}/events")

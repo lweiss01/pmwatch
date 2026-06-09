@@ -75,7 +75,7 @@ def fetch_recent_trades(ticker: str) -> list:
     trades = []
     cursor = ""
     pages = 0
-    max_pages = 5  # cap at 5000 trades per market per run
+    max_pages = 10  # cap at 10000 trades per market per run
 
     while pages < max_pages:
         params = {"ticker": ticker, "limit": 1000}
