@@ -1,12 +1,12 @@
-import unittest
-import sys
+import json
 import os
-from unittest.mock import patch, MagicMock
+import sys
+import time
+import unittest
 
 # Add parent directory to path to import news_engine
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-# Import db first to avoid import order errors
 import db
 
 try:
@@ -14,36 +14,43 @@ try:
 except ImportError:
     news_engine = None  # Expected during Red phase
 
+FIXTURES_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    "fixtures",
+    "news_articles.json",
+)
+
+
 class TestNewsEngine(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.original_db_path = db.DB_PATH
+        cls.test_db_path = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            "data",
+            "test_pmwatch_news.db",
+        )
+        with open(FIXTURES_PATH, encoding="utf-8") as f:
+            cls.fixtures = json.load(f)
+
+    @classmethod
+    def tearDownClass(cls):
+        db.DB_PATH = cls.original_db_path
+        if os.path.exists(cls.test_db_path):
+            try:
+                os.remove(cls.test_db_path)
+            except OSError:
+                pass
+
     def setUp(self):
         self.assertIsNotNone(news_engine, "news_engine module does not exist yet (expected in RED phase)")
-
-    def test_keyword_matching(self):
-        """Verify that articles are correctly mapped to series_tickers based on content keywords."""
-        # Setup mock article text
-        title_ag = "President nominates new Attorney General Blanche"
-        desc_ag = "Blanche has been chosen to lead the Justice Department (DOJ)."
-        
-        series_ag = news_engine.match_series(title_ag, desc_ag)
-        self.assertEqual(series_ag, "KXNEXTAG")
-        
-        # Test SCOTUS resignation
-        title_scotus = "Supreme Court Justice retirement announcement expected"
-        desc_scotus = "A major vacancy is opening up on the high court (SCOTUS)."
-        series_sc = news_engine.match_series(title_scotus, desc_scotus)
-        self.assertEqual(series_sc, "KXSCOTUSRESIGN")
-        
-        # Test CPI
-        title_cpi = "Latest CPI index shows rise in consumer prices"
-        desc_cpi = "Inflation figures released by the Bureau of Labor Statistics (BLS)."
-        series_cpi = news_engine.match_series(title_cpi, desc_cpi)
-        self.assertEqual(series_cpi, "KXCPI")
-        
-        # Test completely unrelated text
-        title_unrelated = "Local sports team wins championship"
-        desc_unrelated = "Fans celebrate in the streets after historical victory."
-        series_none = news_engine.match_series(title_unrelated, desc_unrelated)
-        self.assertIsNone(series_none)
+        db.DB_PATH = self.test_db_path
+        if os.path.exists(self.test_db_path):
+            try:
+                os.remove(self.test_db_path)
+            except OSError:
+                pass
+        db.init_db()
 
     def test_parse_rss_feed(self):
         """Verify that standard RSS feed XML is correctly parsed into articles."""
@@ -126,11 +133,102 @@ class TestNewsEngine(unittest.TestCase):
             "published_ts": 1781003600
         }
         
-        conf_mainstream = news_engine.calculate_correlation_confidence(anomaly, news_mainstream, time_diff=3600, overlap_ratio=0.5)
-        conf_gov = news_engine.calculate_correlation_confidence(anomaly, news_gov, time_diff=3600, overlap_ratio=0.5)
+        conf_mainstream = news_engine.calculate_correlation_confidence(
+            anomaly, news_mainstream, time_diff=3600, match_quality=0.5
+        )
+        conf_gov = news_engine.calculate_correlation_confidence(
+            anomaly, news_gov, time_diff=3600, match_quality=0.5
+        )
         
         # Gov confidence should be exactly 1.5x of mainstream confidence
         self.assertAlmostEqual(conf_gov, conf_mainstream * 1.5)
+
+    def test_stress_test_does_not_correlate_to_kxfed(self):
+        """Regression: Fed stress test article must not create a KXFED correlation."""
+        article = self.fixtures["fed_stress_test_false_positive"]
+        detected_ts = int(time.time()) - (15 * 3600 + 18 * 60)
+        published_ts = detected_ts + (15 * 3600 + 18 * 60)
+
+        db.insert_anomaly({
+            "ticker": "KXFED-26JUN-T3.50",
+            "market_title": "Will the upper bound of the federal funds rate be above 3.50%?",
+            "series_ticker": "KXFED",
+            "risk_group": "FOMC",
+            "mnpi_actors": "Fed governors",
+            "detected_ts": detected_ts,
+            "detected_time": "2026-06-09T00:42:00Z",
+            "anomaly_score": 299.0,
+            "volume_zscore": 21.44,
+            "block_trade_ratio": 0.5,
+            "directional_flag": 0.3,
+            "trigger_type": "compound",
+            "price_before": 0.45,
+            "price_current": 0.52,
+            "volume_in_window": 1200,
+            "correlated_event": None,
+            "notes": "test anomaly",
+        })
+
+        db.insert_news_articles([{
+            "title": article["title"],
+            "description": article["description"],
+            "url": "https://example.gov/fed-stress-test",
+            "published_time": "2026-06-09T16:00:00Z",
+            "published_ts": published_ts,
+            "source": "Federal Reserve Press",
+            "source_type": "primary_gov",
+            "series_ticker": None,
+            "ingested_ts": int(time.time()),
+        }])
+
+        news_engine.correlate_all_recent_anomalies(lookback_days=7)
+        correlations = db.get_correlations(limit=10)
+        self.assertEqual(len(correlations), 0)
+
+    def test_fed_rate_article_correlates_to_kxfed(self):
+        """Valid rate-policy article should create a KXFED correlation."""
+        article = self.fixtures["fed_rate_decision_true_positive"]
+        detected_ts = int(time.time()) - 3600
+        published_ts = detected_ts + 3600
+
+        db.insert_anomaly({
+            "ticker": "KXFED-26DEC-T4.5",
+            "market_title": "Fed funds rate market",
+            "series_ticker": "KXFED",
+            "risk_group": "FOMC",
+            "mnpi_actors": "Fed governors",
+            "detected_ts": detected_ts,
+            "detected_time": "2026-06-09T12:00:00Z",
+            "anomaly_score": 50.0,
+            "volume_zscore": 3.0,
+            "block_trade_ratio": 0.2,
+            "directional_flag": 0.1,
+            "trigger_type": "volume_spike",
+            "price_before": 0.40,
+            "price_current": 0.42,
+            "volume_in_window": 500,
+            "correlated_event": None,
+            "notes": "test anomaly",
+        })
+
+        db.insert_news_articles([{
+            "title": article["title"],
+            "description": article["description"],
+            "url": "https://example.gov/fed-rate-decision",
+            "published_time": "2026-06-09T13:00:00Z",
+            "published_ts": published_ts,
+            "source": "Federal Reserve Press",
+            "source_type": "primary_gov",
+            "series_ticker": "KXFED",
+            "ingested_ts": int(time.time()),
+        }])
+
+        news_engine.correlate_all_recent_anomalies(lookback_days=7)
+        correlations = db.get_correlations(limit=10)
+        self.assertEqual(len(correlations), 1)
+        self.assertEqual(correlations[0]["ticker"], "KXFED-26DEC-T4.5")
+        self.assertIn("fed funds rate", correlations[0]["notes"].lower())
+
 
 if __name__ == "__main__":
     unittest.main()

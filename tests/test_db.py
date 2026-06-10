@@ -41,13 +41,51 @@ class TestDBForensics(unittest.TestCase):
         cursor = conn.cursor()
         
         # Check tables exist
-        tables_to_check = ["news_articles", "news_correlations", "microstructure_alerts", "whale_hourly_stats"]
+        tables_to_check = [
+            "news_articles",
+            "news_correlations",
+            "microstructure_alerts",
+            "whale_hourly_stats",
+            "cross_market_clusters",
+        ]
         for table in tables_to_check:
             cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (table,))
             row = cursor.fetchone()
             self.assertIsNotNone(row, f"Table '{table}' was not created!")
             
         conn.close()
+
+    def test_watched_markets_actor_columns(self):
+        """Verify MNPI actor columns exist and persist through upsert."""
+        db.init_db()
+        db.upsert_market({
+            "ticker": "KXFED-TEST",
+            "series_ticker": "KXFED",
+            "title": "Fed test market",
+            "category": "economic_data",
+            "risk_group": "Fed Funds Rate",
+            "mnpi_actors": "FOMC members, Treasury staff",
+            "clearance_tier": 3,
+            "actors_json": '[{"role":"FOMC member","clearance_tier":3}]',
+            "open_time": "",
+            "close_time": "",
+            "volume_fp": 0.0,
+            "last_price_dollars": 0.5,
+            "status": "active",
+            "last_seen": "2026-06-10T00:00:00Z",
+        })
+
+        conn = db.get_conn()
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT clearance_tier, actors_json FROM watched_markets WHERE ticker = ?",
+            ("KXFED-TEST",),
+        )
+        row = cursor.fetchone()
+        conn.close()
+
+        self.assertEqual(row["clearance_tier"], 3)
+        self.assertIn("FOMC member", row["actors_json"])
 
     def test_news_articles_helpers(self):
         """Verify that insert and retrieve helpers for news articles function correctly."""

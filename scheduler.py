@@ -7,6 +7,7 @@ import db
 import collector
 import scorer
 import cluster_scorer
+import cross_market_scorer
 import config
 import news_engine
 import microstructure_watcher
@@ -48,6 +49,12 @@ def collect_and_score():
             log.info(f"*** {clusters} clusters updated ***")
     except Exception as e:
         log.error(f"Cluster scorer failed: {e}")
+    try:
+        cross_market = cross_market_scorer.run_cross_market_scorer()
+        if cross_market:
+            log.info(f"*** {cross_market} cross-market clusters updated ***")
+    except Exception as e:
+        log.error(f"Cross-market scorer failed: {e}")
 
 
 if __name__ == "__main__":

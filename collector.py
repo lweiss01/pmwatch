@@ -1,4 +1,3 @@
-import json
 import time
 import logging
 import requests
@@ -6,10 +5,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 import db
 import config
+from watchlist_loader import load_watchlist
 
 # --- Config ---
 BASE_URL = "https://api.elections.kalshi.com/trade-api/v2"
-WATCHLIST_PATH = Path(__file__).parent / "watchmarket_watchlist.json"
 LOG_PATH = Path(__file__).parent / "logs" / "collector.log"
 RATE_LIMIT_DELAY = 0.4  # seconds between requests
 
@@ -42,23 +41,6 @@ def api_get(path: str, params: dict = None, retries: int = 3) -> dict:
             log.error(f"Request failed ({attempt+1}/{retries}): {path} -- {e}")
             time.sleep(0.5)
     return {}
-
-
-# --- Watchlist Loader ---
-def load_watchlist() -> list:
-    with open(WATCHLIST_PATH, "r", encoding="utf-8-sig") as f:
-        raw = json.load(f)
-
-    markets = []
-    for category, entries in raw.items():
-        for entry in entries:
-            markets.append({
-                "series": entry["series"],
-                "name": entry["name"],
-                "risk": entry["risk"],
-                "category": category
-            })
-    return markets
 
 
 # --- Market Fetcher ---
@@ -292,7 +274,11 @@ def run_collection(fast: bool = False):
                         "title": market.get("title", ""),
                         "category": entry["category"],
                         "risk_group": entry["name"],
-                        "mnpi_actors": entry["risk"],
+                        "mnpi_actors": entry["mnpi_actors"],
+                        "clearance_tier": entry["clearance_tier"],
+                        "actors_json": entry["actors_json"],
+                        "subject_name": market.get("yes_sub_title", ""),
+                        "rules_primary": market.get("rules_primary", ""),
                         "open_time": market.get("open_time", ""),
                         "close_time": market.get("close_time", ""),
                         "volume_fp": float(market.get("volume_fp", 0)),

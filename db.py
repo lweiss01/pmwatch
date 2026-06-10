@@ -105,6 +105,28 @@ def init_db():
         CREATE INDEX IF NOT EXISTS idx_clusters_last   ON clusters(last_seen_ts  DESC);
         CREATE INDEX IF NOT EXISTS idx_clusters_count_last ON clusters(anomaly_count, last_seen_ts DESC);
 
+        CREATE TABLE IF NOT EXISTS cross_market_clusters (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            mnpi_actors TEXT NOT NULL,
+            series_tickers TEXT NOT NULL,
+            tickers TEXT NOT NULL,
+            window_start_ts INTEGER NOT NULL,
+            window_start_time TEXT,
+            window_end_ts INTEGER NOT NULL,
+            window_end_time TEXT,
+            anomaly_count INTEGER NOT NULL,
+            peak_score REAL,
+            total_score REAL,
+            cluster_score REAL,
+            computed_time TEXT,
+            computed_ts INTEGER,
+            UNIQUE(mnpi_actors, window_start_ts)
+        );
+        CREATE INDEX IF NOT EXISTS idx_cross_market_score
+            ON cross_market_clusters(cluster_score DESC);
+        CREATE INDEX IF NOT EXISTS idx_cross_market_window
+            ON cross_market_clusters(window_end_ts DESC);
+
         CREATE TABLE IF NOT EXISTS collection_log (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             run_time TEXT,
@@ -168,9 +190,33 @@ def init_db():
         );
     """)
 
+    _ensure_watched_markets_columns(conn)
+    _ensure_anomaly_columns(conn)
+
     conn.commit()
     conn.close()
     print(f"Database initialized at {DB_PATH}")
+
+
+def _ensure_watched_markets_columns(conn: sqlite3.Connection) -> None:
+    """Add MNPI actor columns to existing databases."""
+    existing = {row[1] for row in conn.execute("PRAGMA table_info(watched_markets)")}
+    if "clearance_tier" not in existing:
+        conn.execute(
+            "ALTER TABLE watched_markets ADD COLUMN clearance_tier INTEGER DEFAULT 1"
+        )
+    if "actors_json" not in existing:
+        conn.execute("ALTER TABLE watched_markets ADD COLUMN actors_json TEXT")
+    if "subject_name" not in existing:
+        conn.execute("ALTER TABLE watched_markets ADD COLUMN subject_name TEXT")
+    if "rules_primary" not in existing:
+        conn.execute("ALTER TABLE watched_markets ADD COLUMN rules_primary TEXT")
+
+
+def _ensure_anomaly_columns(conn: sqlite3.Connection) -> None:
+    existing = {row[1] for row in conn.execute("PRAGMA table_info(anomalies)")}
+    if "subject_name" not in existing:
+        conn.execute("ALTER TABLE anomalies ADD COLUMN subject_name TEXT")
 
 
 def upsert_market(market: dict):
@@ -179,16 +225,30 @@ def upsert_market(market: dict):
     c.execute("""
         INSERT INTO watched_markets
             (ticker, series_ticker, title, category, risk_group, mnpi_actors,
+             clearance_tier, actors_json, subject_name, rules_primary,
              open_time, close_time, volume_fp, last_price_dollars, status, last_seen)
         VALUES
             (:ticker, :series_ticker, :title, :category, :risk_group, :mnpi_actors,
+             :clearance_tier, :actors_json, :subject_name, :rules_primary,
              :open_time, :close_time, :volume_fp, :last_price_dollars, :status, :last_seen)
         ON CONFLICT(ticker) DO UPDATE SET
+            title = excluded.title,
+            mnpi_actors = excluded.mnpi_actors,
+            clearance_tier = excluded.clearance_tier,
+            actors_json = excluded.actors_json,
+            subject_name = excluded.subject_name,
+            rules_primary = excluded.rules_primary,
             volume_fp = excluded.volume_fp,
             last_price_dollars = excluded.last_price_dollars,
             status = excluded.status,
             last_seen = excluded.last_seen
-    """, market)
+    """, {
+        "clearance_tier": market.get("clearance_tier", 1),
+        "actors_json": market.get("actors_json"),
+        "subject_name": market.get("subject_name"),
+        "rules_primary": market.get("rules_primary"),
+        **market,
+    })
     conn.commit()
     conn.close()
 
@@ -247,17 +307,22 @@ def insert_anomaly(anomaly: dict):
     c.execute("""
         INSERT INTO anomalies
             (ticker, market_title, series_ticker, risk_group, mnpi_actors,
+             subject_name,
              detected_ts, detected_time, anomaly_score, volume_zscore,
              block_trade_ratio, directional_flag, trigger_type,
              price_before, price_current, volume_in_window,
              correlated_event, notes)
         VALUES
             (:ticker, :market_title, :series_ticker, :risk_group, :mnpi_actors,
+             :subject_name,
              :detected_ts, :detected_time, :anomaly_score, :volume_zscore,
              :block_trade_ratio, :directional_flag, :trigger_type,
              :price_before, :price_current, :volume_in_window,
              :correlated_event, :notes)
-    """, anomaly)
+    """, {
+        "subject_name": anomaly.get("subject_name"),
+        **anomaly,
+    })
     conn.commit()
     conn.close()
 
@@ -402,6 +467,71 @@ def get_clusters(min_count: int = 2, limit: int = 50, active_days: int = 30) -> 
         ORDER BY cluster_score DESC
         LIMIT ?
     """, (min_count, cutoff, limit))
+    rows = [dict(r) for r in c.fetchall()]
+    conn.close()
+    return rows
+
+
+def upsert_cross_market_clusters_bulk(clusters: list) -> int:
+    """Bulk upsert cross-market cluster records."""
+    if not clusters:
+        return 0
+    conn = get_conn()
+    c = conn.cursor()
+    written = 0
+    try:
+        for cluster in clusters:
+            c.execute("""
+                INSERT INTO cross_market_clusters (
+                    mnpi_actors, series_tickers, tickers,
+                    window_start_ts, window_start_time,
+                    window_end_ts, window_end_time,
+                    anomaly_count, peak_score, total_score, cluster_score,
+                    computed_time, computed_ts
+                ) VALUES (
+                    :mnpi_actors, :series_tickers, :tickers,
+                    :window_start_ts, :window_start_time,
+                    :window_end_ts, :window_end_time,
+                    :anomaly_count, :peak_score, :total_score, :cluster_score,
+                    :computed_time, :computed_ts
+                )
+                ON CONFLICT(mnpi_actors, window_start_ts) DO UPDATE SET
+                    series_tickers = excluded.series_tickers,
+                    tickers = excluded.tickers,
+                    window_end_ts = excluded.window_end_ts,
+                    window_end_time = excluded.window_end_time,
+                    anomaly_count = excluded.anomaly_count,
+                    peak_score = excluded.peak_score,
+                    total_score = excluded.total_score,
+                    cluster_score = excluded.cluster_score,
+                    computed_time = excluded.computed_time,
+                    computed_ts = excluded.computed_ts
+            """, cluster)
+            written += 1
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+    return written
+
+
+def get_cross_market_clusters(limit: int = 50, active_days: int = 30) -> list:
+    conn = get_conn()
+    c = conn.cursor()
+    cutoff = int(time.time()) - (active_days * 86400)
+    c.execute("""
+        SELECT
+            mnpi_actors, series_tickers, tickers,
+            window_start_ts, window_start_time,
+            window_end_ts, window_end_time,
+            anomaly_count, peak_score, total_score, cluster_score
+        FROM cross_market_clusters
+        WHERE window_end_ts >= ?
+        ORDER BY cluster_score DESC, window_end_ts DESC
+        LIMIT ?
+    """, (cutoff, limit))
     rows = [dict(r) for r in c.fetchall()]
     conn.close()
     return rows
@@ -555,6 +685,77 @@ def get_whale_flow(ticker: str, limit: int = 100) -> list:
     rows = [dict(r) for r in c.fetchall()]
     conn.close()
     return rows
+
+
+def get_market_subject_metadata(tickers: list[str]) -> dict[str, dict]:
+    """Return per-ticker subject metadata from watched_markets."""
+    if not tickers:
+        return {}
+    conn = get_conn()
+    c = conn.cursor()
+    placeholders = ",".join("?" for _ in tickers)
+    c.execute(
+        f"""
+        SELECT ticker, title, series_ticker, subject_name, rules_primary
+        FROM watched_markets
+        WHERE ticker IN ({placeholders})
+        """,
+        tickers,
+    )
+    rows = {row["ticker"]: dict(row) for row in c.fetchall()}
+    conn.close()
+    return rows
+
+
+def update_market_subject_metadata(
+    ticker: str,
+    *,
+    subject_name: str | None = None,
+    rules_primary: str | None = None,
+) -> None:
+    conn = get_conn()
+    c = conn.cursor()
+    c.execute(
+        """
+        UPDATE watched_markets
+        SET subject_name = COALESCE(?, subject_name),
+            rules_primary = COALESCE(?, rules_primary)
+        WHERE ticker = ?
+        """,
+        (subject_name, rules_primary, ticker),
+    )
+    conn.commit()
+    conn.close()
+
+
+def clear_correlations() -> int:
+    """Delete all news-to-anomaly correlation rows. Returns rows removed."""
+    conn = get_conn()
+    c = conn.cursor()
+    c.execute("SELECT COUNT(*) FROM news_correlations")
+    count = c.fetchone()[0]
+    c.execute("DELETE FROM news_correlations")
+    conn.commit()
+    conn.close()
+    return count
+
+
+def cap_anomaly_scores(max_score: float = 100.0) -> int:
+    """Cap stored anomaly scores at max_score. Returns rows updated."""
+    conn = get_conn()
+    c = conn.cursor()
+    c.execute(
+        """
+        UPDATE anomalies
+        SET anomaly_score = ?
+        WHERE anomaly_score > ?
+        """,
+        (max_score, max_score),
+    )
+    updated = c.rowcount
+    conn.commit()
+    conn.close()
+    return updated
 
 
 def insert_correlation(correlation: dict):

@@ -94,6 +94,32 @@ class TestAPI(unittest.TestCase):
         self.assertEqual(data[0]["ticker"], "KXCABOUT-26DEC")
         self.assertEqual(data[0]["confidence_score"], 90.0)
 
+    def test_cross_market_clusters_endpoint(self):
+        """Verify that GET /api/cross-market-clusters returns persisted clusters."""
+        cluster = {
+            "mnpi_actors": "Fed governors",
+            "series_tickers": "KXFED,KXCPI",
+            "tickers": "KXFED-26DEC-T4.5,KXCPI-26JUN-T3.0",
+            "window_start_ts": int(time.time()) - 7200,
+            "window_start_time": "2026-06-09T10:00:00Z",
+            "window_end_ts": int(time.time()) - 3600,
+            "window_end_time": "2026-06-09T11:00:00Z",
+            "anomaly_count": 2,
+            "peak_score": 60.0,
+            "total_score": 105.0,
+            "cluster_score": 180.5,
+            "computed_time": "2026-06-09T12:00:00Z",
+            "computed_ts": int(time.time()),
+        }
+        db.upsert_cross_market_clusters_bulk([cluster])
+
+        response = client.get("/api/cross-market-clusters")
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual(len(data), 1)
+        self.assertEqual(data[0]["mnpi_actors"], "Fed governors")
+        self.assertIn("KXFED", data[0]["series_tickers"])
+
     def test_whale_flow_endpoint(self):
         """Verify that GET /api/market/{ticker}/whale-flow returns hourly stats."""
         ticker = "KXCABOUT-26DEC"

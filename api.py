@@ -9,6 +9,7 @@ import db
 import collector
 import scorer
 from cluster_scorer import run_cluster_scorer
+from cross_market_scorer import run_cross_market_scorer
 import config
 
 log = logging.getLogger(__name__)
@@ -58,7 +59,8 @@ def get_markets():
     c.execute("""
         SELECT
             ticker, series_ticker, title, risk_group,
-            mnpi_actors, volume_fp, last_price_dollars,
+            mnpi_actors, clearance_tier, actors_json,
+            volume_fp, last_price_dollars,
             close_time, last_seen
         FROM watched_markets
         ORDER BY volume_fp DESC
@@ -146,6 +148,13 @@ def get_market_trades(ticker: str, limit: int = 200):
     return JSONResponse(rows)
 
 
+@app.get("/api/cross-market-clusters")
+def get_cross_market_clusters(limit: int = 50, active_days: int = 30):
+    """Return cross-series anomaly clusters grouped by shared MNPI actor context."""
+    rows = db.get_cross_market_clusters(limit=limit, active_days=active_days)
+    return JSONResponse(rows)
+
+
 @app.get("/api/clusters")
 def get_clusters(min_count: int = 2, limit: int = 50, active_days: int = 30):
     """Return anomaly clusters sorted by cluster_score.
@@ -190,6 +199,7 @@ def trigger_collection():
             collector.run_collection(fast=True)
             scorer.run_scorer()
             run_cluster_scorer()
+            run_cross_market_scorer()
         except Exception as e:
             log.error(f"Manual collection failed: {e}")
 
@@ -237,6 +247,22 @@ def get_correlations(limit: int = 50):
     """Return recent news-to-anomaly event correlations."""
     rows = db.get_correlations(limit=limit)
     return JSONResponse(rows)
+
+
+@app.post("/api/correlations/rebuild")
+def rebuild_correlations(
+    lookback_days: int = 30,
+    cap_scores: bool = True,
+):
+    """Re-run correlation logic against existing anomalies and news articles.
+
+    Clears stale correlation rows first, optionally caps historical anomaly
+    scores at 100, then re-matches with current matcher/temporal rules.
+    """
+    from correlation_engine import rebuild_correlations as run_rebuild
+
+    result = run_rebuild(lookback_days=lookback_days, cap_scores=cap_scores)
+    return JSONResponse({"status": "ok", **result})
 
 
 @app.get("/api/market/{ticker}/whale-flow")

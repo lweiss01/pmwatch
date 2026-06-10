@@ -1,0 +1,47 @@
+{
+  "fed_stress_test_false_positive": {
+    "title": "Federal Reserve Board announces stress test release date",
+    "description": "Federal Reserve Board announces that results from its annual bank stress test will be released on Wednesday, June 24, at 4 p.m. EDT.",
+    "expected_series": null,
+    "reject_for_correlation": "KXFED"
+  },
+  "fed_rate_decision_true_positive": {
+    "title": "FOMC holds fed funds rate target range unchanged",
+    "description": "The Federal Reserve left its interest rate target range steady following the latest monetary policy meeting.",
+    "expected_series": "KXFED",
+    "correlation_series": "KXFED"
+  },
+  "scotus_ruling_false_positive": {
+    "title": "Supreme Court issues ruling on tariffs case",
+    "description": "The Supreme Court released a decision after oral argument on international trade policy.",
+    "expected_series": null,
+    "reject_for_correlation": "KXSCOTUSRESIGN"
+  },
+  "scotus_resignation_true_positive": {
+    "title": "Supreme Court Justice retirement announcement expected",
+    "description": "A major vacancy is opening up on the high court (SCOTUS).",
+    "expected_series": "KXSCOTUSRESIGN"
+  },
+  "shutdown_talks_false_positive": {
+    "title": "Senators report shutdown of talks continues",
+    "description": "Negotiations stalled after a shutdown of talks on the trade package.",
+    "expected_series": null,
+    "reject_for_correlation": "KXGOVSHUT"
+  },
+  "government_shutdown_true_positive": {
+    "title": "Congress faces government shutdown deadline",
+    "description": "Lawmakers remain divided as a federal shutdown funding lapse looms.",
+    "expected_series": "KXGOVSHUT"
+  },
+  "negated_pardon_false_positive": {
+    "title": "President denied pardon request",
+    "description": "The White House rejected clemency for the former official.",
+    "expected_series": null,
+    "reject_for_correlation": "KXTRUMPPARDONS"
+  },
+  "cabinet_resignation_true_positive": {
+    "title": "Cabinet secretary announces resignation",
+    "description": "A senior department head will leave office at the end of the month.",
+    "expected_series": "KXCABOUT"
+  }
+}

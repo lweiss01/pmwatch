@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<FinancialDisclosure>
+  <Member>
+    <Prefix></Prefix>
+    <Last>Smith</Last>
+    <First>Jane</First>
+    <Suffix></Suffix>
+    <FilingType>P</FilingType>
+    <StateDst>CA12</StateDst>
+    <Year>2026</Year>
+    <FilingDate>6/1/2026</FilingDate>
+    <DocID>20012345</DocID>
+  </Member>
+  <Member>
+    <Prefix></Prefix>
+    <Last>Jones</Last>
+    <First>Robert</First>
+    <Suffix></Suffix>
+    <FilingType>W</FilingType>
+    <StateDst>TX01</StateDst>
+    <Year>2026</Year>
+    <FilingDate>6/2/2026</FilingDate>
+    <DocID>20012346</DocID>
+  </Member>
+</FinancialDisclosure>

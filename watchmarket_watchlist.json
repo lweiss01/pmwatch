@@ -85,7 +85,21 @@
                           {
                               "risk":  "FOMC members, Treasury staff",
                               "series":  "KXFED",
-                              "name":  "Fed Funds Rate"
+                              "name":  "Fed Funds Rate",
+                              "actors":  [
+                                             {
+                                                 "role":  "FOMC member",
+                                                 "clearance_tier":  3
+                                             },
+                                             {
+                                                 "role":  "Treasury Secretary",
+                                                 "clearance_tier":  3
+                                             },
+                                             {
+                                                 "role":  "Fed Board staff",
+                                                 "clearance_tier":  2
+                                             }
+                                         ]
                           },
                           {
                               "risk":  "BLS staff",
@@ -176,7 +190,17 @@
                    {
                        "risk":  "Justices themselves, clerks",
                        "series":  "KXSCOTUSRESIGN",
-                       "name":  "SCOTUS Resignations"
+                       "name":  "SCOTUS Resignations",
+                       "actors":  [
+                                      {
+                                          "role":  "Supreme Court justice",
+                                          "clearance_tier":  3
+                                      },
+                                      {
+                                          "role":  "Supreme Court clerk",
+                                          "clearance_tier":  2
+                                      }
+                                  ]
                    },
                    {
                        "risk":  "Senate judiciary members",

@@ -1,152 +1,230 @@
-# 📡 pmwatch: The Insider Trading Forensics Terminal for Kalshi Prediction Markets
+# pmwatch: The Insider Trading Forensics Terminal for Kalshi Prediction Markets
 
-`pmwatch` is a high-signal, local-first quantitative forensics terminal built specifically to track, map, and expose political and macroeconomic insider trading across Kalshi prediction markets.
+`pmwatch` is a high-signal, local-first quantitative forensics terminal built to track, map, and expose political and macroeconomic insider trading patterns across Kalshi prediction markets.
 
-When policy shifts, regulatory rulings, or economic metrics are drafted behind closed doors, the individuals with access to material non-public information leave an undeniable footprint in alternative asset liquidity pools before press releases ever drop. While traditional retail chart scanners look retroactively at price actions, `pmwatch` actively monitors the dark space where asymmetric capital front-runs public policy announcements.
+When policy shifts, regulatory rulings, or economic metrics are drafted behind closed doors, individuals with access to material non-public information can leave a footprint in alternative asset liquidity pools before press releases drop. While retail chart scanners look retroactively at price action, `pmwatch` monitors volume anomalies, order-book microstructure, whale positioning, and primary-source news timing to surface suspected information leakage windows.
 
 ![pmwatch dashboards](https://raw.githubusercontent.com/lweiss01/pmwatch/main/screenshot.png)
 
 ---
 
-## 🔥 Key Visual Telemetry & Signal Drilldowns
+## Dashboard Views
 
-The real-time terminal UI drops you into an institutional-grade security operations center:
+The terminal UI exposes four live forensic views:
 
-* **The Insider Leakage Timeline:** Maps real-time volume anomalies directly against authoritative primary federal data streams, isolating the exact minute insider capital pre-positioned itself ahead of public media drops.
-* **Whale Flow Exposure Matrix:** Strips away retail noise by running percentile-based clustering to isolate the net positioning shifts of the top 1% of traders.
-* **Microstructure Alert Monitor:** A live forensic ticker logging real-time institutional spoofing walls, rapid order cancellations, and wash-trading configurations designed to manipulate order books.
-
----
-
-## ⚡ Core Architecture: Built for the Alpha
-
-The framework trades standard equity assumptions for raw predictive forensics, running entirely under local-first engineering principles.
-
-### 1. Order Book Manipulation Forensics
-Prediction market contracts trade within unique fixed bounds ($0.00 to $1.00), meaning traditional equity technical analysis tools fail completely. `pmwatch` tracks depth-of-book ($L2$) fluctuations via a stateful, thread-safe memory queue:
-* **Pre-Cancellation Spoofing Heuristics:** Detects massive liquidity walls designed to panic retail traders, monitoring for patterns where 80%+ of a deep wall is abruptly cancelled within 120 seconds alongside sharp opposite-side execution.
-* **Wash Trading Cross-Detection:** Intercepts live trade streams to pair identical execution sizes on opposite sides of the market within a tight 60-second window to flag artificial volume inflation.
-
-### 2. First-Party Information Leakage Mapping
-Stop scraping slow, editorialized mainstream media aggregators. `pmwatch` builds a mathematically verifiable information edge by wiring directly into raw government data infrastructure to flag suspected insider moves:
-* **The $2\sigma$ Threat Alert:** Tracks rolling contract volume baselines to fire high-priority triggers the second trading volume spikes $\ge 2$ standard deviations above the statistical norm.
-* **Authoritative Ingestion Pipes:** Streams live data directly from the Federal Register API (notices, agency drafts, and proposed rules), GPO GovInfo search endpoints (statutes and committee prints), Congress.gov floor activity, and TreasuryDirect auction timelines.
-* **1.5x Source Weighting:** Automatically applies a higher confidence metric to raw, unedited government announcements over secondary news aggregation to isolate the true lead time of a leak.
-
-### 3. Dynamic Whale Flow Profiling
-Because low-liquidity alternative markets are highly sensitive to hidden capital blocks, `pmwatch` dynamically isolates the top 1% of market participants to map insider accumulation:
-* **Contract-Specific Percentiles:** Avoids the trap of hardcoded dollar values. The system calculates the 99th-percentile trade size dynamically per ticker, evaluating a thin legislative contract with the same precision as a massive election line.
-* **Hourly Accumulation Rollups:** Tracks clean YES vs. NO directional whale flows to reveal continuous institutional positioning walls.
+* **Anomaly Feed** — Volume spikes, block-trade signals, and price divergence scored per contract (capped at 100, with MNPI clearance-tier weighting).
+* **Accumulation Clusters** — Repeated anomaly events on the same ticker within a 72-hour window, scored by directional consistency and escalation trend.
+* **Cross-Market Clusters** — Anomalies across 2+ series sharing the same MNPI actor group within 24 hours (e.g. coordinated multi-leg positioning).
+* **Information Leakage Correlations** — Maps anomaly timestamps against ingested news articles with temporal lead-time scoring and subject-aware matching.
+* **Microstructure Alerts** — Spoofing walls, wash-trading patterns, and order-book manipulation heuristics.
 
 ---
 
-## 🛠️ Performance & Complete Rate-Limit Safety
+## Core Architecture
 
-Designed to operate seamlessly on local hardware, `pmwatch` enforces absolute data privacy and robust protection against API exhaustion:
-* **Streaming WebSocket Architecture:** Streams raw public book metrics straight into localized in-memory buffers (`collections.deque(maxlen=200)` per ticker).
-* **Zero-REST Polling Footprint:** The 15-second analysis loop runs 100% inside local memory state. It performs precisely one REST warmup call on a cold contract startup, completely eliminating `429 Too Many Requests` limits on volatile trading days.
-* **Proactive Eviction:** Garbage collection routines drop historical order book snapshots older than 120 seconds on every tick to maintain a featherweight, static RAM profile.
+The framework runs entirely on local-first engineering principles using publicly available Kalshi and government data.
+
+### Order Book Manipulation Forensics
+
+Prediction market contracts trade within fixed bounds ($0.00–$1.00). `pmwatch` tracks depth-of-book fluctuations via a stateful in-memory queue:
+
+* **Pre-Cancellation Spoofing Heuristics** — Detects large liquidity walls cancelled within 120 seconds alongside opposite-side execution.
+* **Wash Trading Cross-Detection** — Pairs identical execution sizes on opposite sides within a tight time window to flag artificial volume inflation.
+
+### Volume Anomaly Scoring (`scorer.py`)
+
+* **Compound scoring** from volume Z-score, block-trade ratio, and price divergence.
+* **Score cap at 100** — prevents uncapped outliers from inflating downstream correlation confidence.
+* **Score-delta deduplication** — suppresses re-flags within 2 hours unless the new score is ≥20% higher.
+* **MNPI clearance tiers** — watchlist actor structure (tiers 1–3) applies multipliers to base scores for higher-trust actor groups.
+
+### Information Leakage Correlation (`correlation_engine.py`)
+
+Correlations are no longer naive keyword substring matches. The pipeline uses:
+
+* **Anchor + signal matching** (`keyword_matcher.py`) — requires co-occurring context (e.g. `"federal reserve"` anchor + `"fed funds rate"` signal for `KXFED`). Blocklists suppress known false positives (e.g. Fed *stress test* announcements must not match rate markets).
+* **Feed topic scoping** — Federal Reserve press releases only evaluate `KXFED`; TreasuryDirect feeds are metadata-only; disclosure feeds use dedicated parsers.
+* **Subject-aware gating** (`market_subject.py`) — person-specific contracts (nominee pools, individual pardon lines) resolve the actual subject from Kalshi `yes_sub_title`, market rules, or ticker suffix (`TCRU` → Ted Cruz, `GMAX` → Ghislaine Maxwell). Articles must mention that person, not just the parent series topic.
+* **Temporal lead-time bands** — pre-news windows weighted by tier (0–2h: 1.8×, 2–8h: 1.3×, 8–48h: linear decay). Post-news reaction window: 0–6h at 0.7×.
+* **Minimum confidence threshold** (12.0) — weak matches are discarded.
+* **Source weighting** — disclosure filings 2.0×, primary government 1.5×, mainstream news 1.0×.
+
+### News & Disclosure Ingestion (`feed_ingestion.py`)
+
+Direct pipes into authoritative and primary sources:
+
+* Federal Reserve press (Atom)
+* Congress.gov floor and presented-to-president RSS
+* White House Briefings
+* Federal Register API (daily documents + executive orders)
+* TreasuryDirect offerings (metadata only, no series matching)
+* House Financial Disclosure PTR index (ZIP/XML)
+* Senate eFD PTR JSON (graceful skip if blocked)
+* SEC EDGAR Form 4 (Atom fallback)
+* NYT Politics and Politico Playbook RSS
+
+`news_engine.py` is a thin orchestrator; ingestion and correlation logic live in dedicated modules.
+
+### Whale Flow Profiling
+
+* **Contract-specific percentiles** — 99th-percentile trade size calculated per ticker.
+* **Hourly accumulation rollups** — YES vs. NO directional whale flow for charting.
+
+### Watchlist & MNPI Actors (`watchlist_loader.py`)
+
+`watchmarket_watchlist.json` drives which Kalshi series are monitored. Entries support a legacy `risk` string or a structured `actors` array with `role` and `clearance_tier`. The collector persists actor metadata and clearance tiers to `watched_markets`.
 
 ---
 
-## 🚀 Installation & Quickstart (100% Public Data, No API Keys Needed)
+## Module Map
 
-`pmwatch` operates entirely on publicly available data endpoints. You do not need a Kalshi trading account, profile verification, API keys, or authentication credentials to run this terminal.
+| Module | Responsibility |
+|--------|----------------|
+| `collector.py` | Poll Kalshi markets/trades; persist `subject_name` from `yes_sub_title` |
+| `scorer.py` | Flag volume/block/price anomalies per watched market |
+| `cluster_scorer.py` | Group repeated anomalies per ticker (72h gap) |
+| `cross_market_scorer.py` | Group anomalies across series by shared MNPI actors (24h window) |
+| `feed_ingestion.py` | Fetch and parse RSS, Atom, disclosures, Federal Register |
+| `keyword_matcher.py` | Series rules, blocklists, feed scoping, match quality |
+| `market_subject.py` | Resolve person behind a ticker; gate correlations by subject |
+| `correlation_engine.py` | Temporal confidence, correlate anomalies ↔ news, rebuild |
+| `news_engine.py` | Thin orchestrator re-exporting ingestion + correlation |
+| `microstructure_watcher.py` | Spoofing and wash-trade detection |
+| `scheduler.py` | Background daemon for collection, scoring, feeds, microstructure |
+| `api.py` | FastAPI server + dashboard |
 
-### Step 1: Download the Application
+---
 
-**Option A: Clone with Git (Recommended)**
-Open a PowerShell window, navigate to your projects directory, and run:
+## Installation & Quickstart
+
+`pmwatch` operates on publicly available data endpoints. No Kalshi API keys or trading account required.
+
+### Step 1: Download
+
 ```powershell
-git clone [https://github.com/lweiss01/pmwatch.git](https://github.com/lweiss01/pmwatch.git)
+git clone https://github.com/lweiss01/pmwatch.git
 cd pmwatch
 ```
 
-**Option B: Download ZIP File**
-Go to the repository on GitHub (`https://github.com/lweiss01/pmwatch`), click the green **Code** button, select **Download ZIP**, and extract it to a folder of your choice.
+Or download the ZIP from GitHub and extract it.
 
-### Step 2: Set Up Environment & Dependencies
-Open PowerShell in your project folder. If this is your first time using virtual environments in PowerShell, execute this command to allow running scripts for the current terminal session:
+### Step 2: Environment & Dependencies
+
 ```powershell
 Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope Process
-```
-
-Now, create your virtual environment, activate it, install requirements, and initialize the database tables:
-```powershell
 python -m venv .venv
 .venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 python db.py
 ```
-*(This maps the localized SQLite structure under `data/pmwatch.db` for your tracking logs).*
 
-### Step 3: Run the Application (Dual-Window Setup)
+This creates the SQLite database at `data/pmwatch.db`.
 
-To run both the background analyzer and the web dashboard, launch two separate processes in side-by-side PowerShell windows.
+### Step 3: Run (Dual-Window Setup)
 
-**🧵 Window 1: The Background Scheduler Daemon**
-Open a new PowerShell window in your `pmwatch` folder and run:
+**Window 1 — Background scheduler:**
+
 ```powershell
 .venv\Scripts\Activate.ps1
 python scheduler.py
 ```
-*The daemon will spin up. Microstructure checks run every 15 seconds, news ingestion loops every 15 minutes, and whale updates roll up hourly.*
 
-**🖥️ Window 2: The FastAPI Web Server & Dashboard**
-Open another separate PowerShell window in your `pmwatch` folder and run:
+Runs collection/scoring on the configured interval (default from `config.json`), news ingestion every 15 minutes, and microstructure analysis every 15 seconds.
+
+**Window 2 — Web server:**
+
 ```powershell
 .venv\Scripts\Activate.ps1
 python -m uvicorn api:app --port 8080
 ```
 
-### Step 4: Open the Terminal Dashboard for Insights Galore
-Once both windows are running, open your web browser and navigate to:
-```text
+### Step 4: Open the Dashboard
+
+```
 http://localhost:8080
 ```
-**Insights Galore:** The moment the first collector processing cycle finishes analyzing its batched metrics, the terminal comes completely alive. The UI instantly populates your active $2\sigma$ anomaly feeds, draws interactive SVG whale flow tracking charts, and maps out hidden pre-positioning windows.
 
-*To force immediate execution without waiting for the scheduler intervals, click the glowing **"Manual Run"** button in the top-right header.*
-
----
-
-## 💻 Tech Stack
-
-* **Core Engine:** Python 3.11+, FastAPI, NumPy, Pandas, Asyncio.
-* **Data Storage:** Lightweight, hyper-optimized local SQLite schema managed via `db.py` tracking transaction anomalies and automated data pruning.
-* **Front End:** Dark-mode dashboard (`dashboard.html`) utilizing lightweight SVG visualization layers to chart net whale exposure without external tracking scripts.
+Use the **Manual Run** button in the header to trigger an immediate collection cycle, or call `POST /api/collector/trigger`.
 
 ---
 
-## 🧪 Verification & Test Framework
+## Maintenance: Rebuilding Derived Data
 
-Built with rigorous Test-Driven Development (TDD) principles to guarantee absolute numerical stability across extreme market turbulence.
+After upgrading correlation logic or capping historical scores, refresh derived tables against existing collected data:
 
-Verify the local engine parameters and ensure the setup matches specifications:
-```bash
+```powershell
+# 1. Refresh market metadata (populates subject_name from Kalshi yes_sub_title)
+python collector.py
+
+# 2. Rebuild correlations — clears stale rows, caps scores at 100, re-matches with current rules
+python correlation_engine.py --lookback-days 60
+
+# 3. Refresh per-ticker clusters (recalculates scores from capped anomalies)
+python cluster_scorer.py
+
+# 4. Refresh cross-market clusters
+python -c "import db; from cross_market_scorer import run_cross_market_scorer; db.init_db(); print(run_cross_market_scorer(lookback_days=60))"
+```
+
+API equivalents (server running):
+
+```text
+POST /api/correlations/rebuild?lookback_days=60
+POST /api/clusters/refresh?lookback_days=60
+```
+
+---
+
+## API Endpoints
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /api/anomalies` | Recent flagged anomalies |
+| `GET /api/clusters` | Per-ticker accumulation clusters |
+| `GET /api/cross-market-clusters` | Cross-series MNPI actor clusters |
+| `GET /api/correlations` | News-to-anomaly leakage correlations |
+| `GET /api/microstructure/alerts` | Spoofing and wash-trade alerts |
+| `GET /api/market/{ticker}/whale-flow` | Hourly whale flow rollups |
+| `POST /api/collector/trigger` | Manual collection + scoring run |
+| `POST /api/correlations/rebuild` | Clear and re-run correlation matching |
+| `POST /api/clusters/refresh` | Re-run cluster scorer |
+
+---
+
+## Tech Stack
+
+* **Core:** Python 3.11+, FastAPI, NumPy, APScheduler
+* **Storage:** SQLite (`data/pmwatch.db`) with automatic schema migrations
+* **Frontend:** Single-page dashboard (`dashboard.html`) with SVG whale-flow charts
+
+---
+
+## Verification
+
+```powershell
 python -m unittest discover tests
 ```
 
+The test suite covers keyword matching (including regression cases like Fed stress-test false positives), temporal correlation bands, subject gating, feed parsing, scorer hygiene, cluster scoring, and API endpoints.
+
 ---
 
-## 📖 The Founding Thesis: Holding Positions of Trust Accountable
+## The Founding Thesis
 
-Prediction markets are uniquely vulnerable to asymmetric information corruption. Because the legal custodians of public policy data (including legislative aides, economic agency staff, regulatory draft writers, and politicians) possess non-public insights into upcoming announcements, that information inevitably leaves a footprint in the order book when bad actors look to profit from positions of trust.
+Prediction markets are vulnerable to asymmetric information corruption. Legal custodians of public policy data — legislative aides, agency staff, regulatory draft writers — possess non-public insights that can leave footprints in order books before public announcements.
 
 ### The Catalyst: The George Santos Precedent
-`pmwatch` was built as a direct response to flagrant exploitation of alternative asset pools by public figures, a reality most notably highlighted by the federal insider trading investigations into former Congressman George Santos. By publicly pumping up the sentiment surrounding an event contract and then using non-public intent to dump tens of thousands of dollars into an opposing asymmetric whale position, bad actors have proven that prediction markets are a playground for manipulation if left unmonitored. 
+
+`pmwatch` was built in response to exploitation of alternative asset pools by public figures, highlighted by federal insider trading investigations into former Congressman George Santos.
 
 ### Real-World Micro-Case Study: The 9-Hour Edge
-During an alpha run, the `pmwatch` engine flagged an extreme structural anomaly. In the dead of night at 12:41 AM, the volume $Z$-score for a high-profile federal nomination contract spiked to a staggering 21.44 $\sigma$ over baseline. This move was driven by a highly concentrated asymmetric whale position shorting the consensus choice by over 13,000 contracts. 
 
-Exactly 9 hours and 13 minutes later, mainstream political media dropped the breaking news bulletin confirming the sudden shift. The wider market scrambled and re-priced instantly, but `pmwatch` had already mapped the information leakage window nearly half a day prior. This sequence proves that political insider trading leaves a clear structural signature before public disclosure.
+During an alpha run, the engine flagged an extreme structural anomaly. At 12:41 AM, the volume Z-score for a high-profile federal nomination contract spiked to 21.44σ. The move was driven by a concentrated asymmetric whale position. Nine hours and thirteen minutes later, mainstream political media confirmed the shift. `pmwatch` had mapped the information leakage window nearly half a day earlier.
 
-`pmwatch` turns the chaos of order book stream data into definitive, institutional-grade intelligence, putting the raw mechanics of information transparency completely in your hands.
+`pmwatch` turns order book and news stream data into structured forensic intelligence for public transparency research.
+
 ---
 
 ## Disclaimer
 
-pmwatch is a public transparency tool. It detects market-level anomalies using only
-publicly available data. It does not identify individual traders, make accusations,
-or constitute legal or financial advice. High anomaly scores indicate unusual market
-activity that may warrant further investigation -- nothing more.
+pmwatch is a public transparency tool. It detects market-level anomalies using only publicly available data. It does not identify individual traders, make accusations, or constitute legal or financial advice. High anomaly scores indicate unusual market activity that may warrant further investigation — nothing more.
