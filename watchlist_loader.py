@@ -5,6 +5,7 @@ Watchlist loading with MNPI actor structure (v2) and legacy risk-string support.
 from __future__ import annotations
 
 import json
+from functools import lru_cache
 from pathlib import Path
 
 WATCHLIST_PATH = Path(__file__).parent / "watchmarket_watchlist.json"
@@ -206,3 +207,16 @@ def load_watchlist(path: Path | None = None) -> list[dict]:
         for entry in entries:
             markets.append(normalize_watchlist_entry(entry, category))
     return markets
+
+
+@lru_cache
+def series_category_map() -> dict[str, str]:
+    """Map series ticker (e.g. KXFED) to watchlist category slug."""
+    return {entry["series"]: entry["category"] for entry in load_watchlist()}
+
+
+def category_for_series(series_ticker: str | None) -> str:
+    """Return watchlist category slug for a series, or empty string if unknown."""
+    if not series_ticker:
+        return ""
+    return series_category_map().get(series_ticker, "")

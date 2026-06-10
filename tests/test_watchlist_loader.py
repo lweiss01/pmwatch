@@ -41,6 +41,14 @@ class TestWatchlistLoader(unittest.TestCase):
         actors = json.loads(entry["actors_json"])
         self.assertEqual(actors[0]["role"], "Supreme Court justice")
 
+    def test_series_category_map_maps_kxfed_to_economic_data(self):
+        watchlist_loader.series_category_map.cache_clear()
+        mapping = watchlist_loader.series_category_map()
+        self.assertEqual(mapping.get("KXFED"), "economic_data")
+        self.assertEqual(mapping.get("KXNEXTAG"), "executive_actions")
+        self.assertEqual(watchlist_loader.category_for_series("KXFED"), "economic_data")
+        self.assertEqual(watchlist_loader.category_for_series("UNKNOWN"), "")
+
     def test_unknown_series_falls_back_to_risk_split(self):
         entry = watchlist_loader.normalize_watchlist_entry(
             {
