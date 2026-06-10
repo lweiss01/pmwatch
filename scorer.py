@@ -9,13 +9,13 @@ import numpy as np
 log = logging.getLogger(__name__)
 
 
-# --- Thresholds ---
-YELLOW_SCORE = 25.0
-RED_SCORE = 60.0
+# --- Thresholds (defaults; runtime reads config.get_* helpers) ---
+YELLOW_SCORE = config.DEFAULT_SCORER_THRESHOLDS["yellow_score"]
+RED_SCORE = config.DEFAULT_SCORER_THRESHOLDS["red_score"]
 MIN_TRADES_FOR_SCORING = 10
 MAX_ANOMALY_SCORE = 100.0
-DEDUP_HOURS = 2
-SCORE_DELTA_THRESHOLD = 0.20
+DEDUP_HOURS = config.DEFAULT_SCORER_THRESHOLDS["dedup_hours"]
+SCORE_DELTA_THRESHOLD = config.DEFAULT_SCORER_THRESHOLDS["score_delta_threshold"]
 CLEARANCE_MULTIPLIER = {1: 1.0, 2: 1.1, 3: 1.25}
 
 
@@ -43,8 +43,10 @@ def should_suppress_repeat(
     ticker: str,
     new_score: float,
     recent_scores: dict[str, float] | None = None,
-    min_delta_pct: float = SCORE_DELTA_THRESHOLD,
+    min_delta_pct: float | None = None,
 ) -> bool:
+    if min_delta_pct is None:
+        min_delta_pct = config.get_score_delta_threshold()
     """Suppress re-flag only when a recent score exists and the new score isn't materially higher."""
     if recent_scores is not None:
         last_score = recent_scores.get(ticker)
@@ -54,7 +56,7 @@ def should_suppress_repeat(
 
     conn = db.get_conn()
     c = conn.cursor()
-    cutoff = int(time.time()) - (DEDUP_HOURS * 3600)
+    cutoff = int(time.time()) - (config.get_dedup_hours() * 3600)
     c.execute(
         """
         SELECT MAX(anomaly_score) AS max_score
@@ -70,7 +72,13 @@ def should_suppress_repeat(
     return new_score < float(row["max_score"]) * (1 + min_delta_pct)
 
 
-def already_flagged_recently(ticker: str, hours: int = DEDUP_HOURS, recent_anomalies: set = None) -> bool:
+def already_flagged_recently(
+    ticker: str,
+    hours: int | None = None,
+    recent_anomalies: set = None,
+) -> bool:
+    if hours is None:
+        hours = config.get_dedup_hours()
     """Legacy check: ticker flagged within window. Prefer should_suppress_repeat for score-delta logic."""
     if recent_anomalies is not None:
         return ticker in recent_anomalies
@@ -249,13 +257,14 @@ def score_market(
     block = block_trade_signal_from_trades(trades_7d)
     price = price_divergence_from_trades(trades_7d)
 
-    base_score = max(0.0, (vol_z - 1.5) * 15) * clearance_multiplier(market)
+    clearance_mult = clearance_multiplier(market)
+    base_score = max(0.0, (vol_z - 1.5) * 15) * clearance_mult
     block_modifier = 1.0 + block["ratio"] + block["directional_no"]
     price_bonus = min(30.0, price["max_jump"] * 100)
     raw_score = (base_score * block_modifier) + price_bonus
     normalized_score = min(MAX_ANOMALY_SCORE, raw_score)
 
-    if normalized_score < YELLOW_SCORE:
+    if normalized_score < config.get_yellow_score():
         return None
 
     if should_suppress_repeat(ticker, normalized_score, recent_scores):
@@ -263,6 +272,17 @@ def score_market(
 
     trigger = "compound" if base_score > 0 and price_bonus > 0 else \
               "volume_spike" if base_score > 0 else "price_divergence"
+
+    score_components = {
+        "volume_zscore": round(vol_z, 3),
+        "base_score": round(base_score, 2),
+        "block_modifier": round(block_modifier, 3),
+        "price_bonus": round(price_bonus, 2),
+        "clearance_multiplier": round(clearance_mult, 2),
+        "raw_score": round(raw_score, 2),
+        "normalized_score": round(normalized_score, 2),
+        "trigger_type": trigger,
+    }
 
     return {
         "ticker": ticker,
@@ -282,7 +302,13 @@ def score_market(
         "price_current": round(price["price_now"], 4),
         "volume_in_window": block["count"],
         "correlated_event": None,
-        "notes": f"vol_z={vol_z:.2f} price_jump={price['max_jump']:.4f} direction={price['direction']}"
+        "score_components": score_components,
+        "notes": (
+            f"vol_z={vol_z:.2f} price_jump={price['max_jump']:.4f} "
+            f"direction={price['direction']} | "
+            f"base={base_score:.1f} block_mod={block_modifier:.2f} "
+            f"price_bonus={price_bonus:.1f} clearance={clearance_mult:.2f}"
+        ),
     }
 
 
@@ -295,7 +321,7 @@ def run_scorer() -> int:
     markets = [dict(r) for r in c.fetchall()]
     
     # Pre-fetch recent anomaly scores for score-delta deduplication
-    cutoff_ts = int(time.time()) - (DEDUP_HOURS * 3600)
+    cutoff_ts = int(time.time()) - (config.get_dedup_hours() * 3600)
     c.execute(
         """
         SELECT ticker, MAX(anomaly_score) AS max_score

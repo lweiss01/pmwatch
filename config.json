@@ -1,3 +1,66 @@
 {
-  "scheduler_interval_minutes": 30
+  "scheduler_interval_minutes": 30,
+  "correlation": {
+    "min_confidence": 12.0,
+    "min_match_quality": 0.35
+  },
+  "matcher": {
+    "min_ingest_quality": 0.35
+  },
+  "scorer": {
+    "yellow_score": 25.0,
+    "red_score": 60.0,
+    "dedup_hours": 2,
+    "score_delta_threshold": 0.2
+  },
+  "scheduled_events": {
+    "enabled": true,
+    "refresh": {
+      "enabled": true,
+      "schedule": "monthly",
+      "last_refresh": null,
+      "last_status": "pending",
+      "sources": {}
+    },
+    "events": [
+      {
+        "series": ["KXFED"],
+        "label": "FOMC rate decision",
+        "dates": [
+          "2026-01-29",
+          "2026-03-19",
+          "2026-05-07",
+          "2026-06-18",
+          "2026-07-30",
+          "2026-09-17",
+          "2026-11-05",
+          "2026-12-10"
+        ],
+        "window_hours_before": 48,
+        "window_hours_after": 6,
+        "temporal_floor": 0.85
+      },
+      {
+        "series": ["KXCPI"],
+        "label": "CPI release",
+        "dates": [
+          "2026-01-14",
+          "2026-02-11",
+          "2026-03-11",
+          "2026-04-10",
+          "2026-05-13",
+          "2026-06-10",
+          "2026-07-11",
+          "2026-08-12",
+          "2026-09-11",
+          "2026-10-14",
+          "2026-11-13",
+          "2026-12-10"
+        ],
+        "window_hours_before": 24,
+        "window_hours_after": 6,
+        "temporal_floor": 0.8
+      }
+    ]
+  }
 }
