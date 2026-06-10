@@ -187,5 +187,47 @@ class TestDBForensics(unittest.TestCase):
         self.assertEqual(corrs[0]["ticker"], "KXFED-26DEC-T4.5")
         self.assertEqual(corrs[0]["confidence_score"], 75.2)
 
+    def test_anomaly_score_components_round_trip(self):
+        db.init_db()
+        components = {
+            "volume_zscore": 4.2,
+            "base_score": 40.5,
+            "block_modifier": 1.35,
+            "price_bonus": 8.0,
+            "clearance_multiplier": 1.0,
+            "raw_score": 62.7,
+            "normalized_score": 62.7,
+            "trigger_type": "compound",
+        }
+        db.insert_anomaly({
+            "ticker": "KXFED-26DEC-T4.5",
+            "market_title": "Fed funds market",
+            "series_ticker": "KXFED",
+            "risk_group": "FOMC",
+            "mnpi_actors": "Fed governors",
+            "detected_ts": 1781000000,
+            "detected_time": "2026-06-09T12:00:00Z",
+            "anomaly_score": 62.7,
+            "volume_zscore": 4.2,
+            "block_trade_ratio": 0.3,
+            "directional_flag": 0.1,
+            "trigger_type": "compound",
+            "price_before": 0.45,
+            "price_current": 0.50,
+            "volume_in_window": 500,
+            "correlated_event": None,
+            "notes": "test",
+            "score_components": components,
+        })
+        conn = db.get_conn()
+        row = conn.execute(
+            "SELECT score_components_json FROM anomalies WHERE ticker = ?",
+            ("KXFED-26DEC-T4.5",),
+        ).fetchone()
+        conn.close()
+        self.assertIsNotNone(row["score_components_json"])
+        parsed = db._attach_score_components([dict(row)])[0]["score_components"]
+        self.assertEqual(parsed["normalized_score"], 62.7)
+
 if __name__ == "__main__":
     unittest.main()

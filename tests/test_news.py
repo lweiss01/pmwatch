@@ -63,7 +63,7 @@ class TestNewsEngine(unittest.TestCase):
             <item>
                 <title>President Signs Major Education Reform Bill</title>
                 <link>https://www.nytimes.com/edu-bill</link>
-                <description>The legislative package would reform or abolish federal education oversight (doed).</description>
+                <description>The legislative package would abolish the Department of Education (doed).</description>
                 <pubDate>Tue, 09 Jun 2026 12:00:00 -0400</pubDate>
             </item>
         </channel>

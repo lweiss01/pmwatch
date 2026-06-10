@@ -6,6 +6,7 @@ import time
 # Add parent directory to path to import api
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import config
 import db
 
 try:
@@ -83,7 +84,11 @@ class TestAPI(unittest.TestCase):
             "news_id": news_id,
             "lead_time_seconds": 3600,
             "confidence_score": 90.0,
-            "notes": "Matched keywords: cabinet"
+            "notes": "Matched keywords: cabinet",
+            "explanation_json": (
+                '{"decision":"accept","score_type":"leakage",'
+                '"sub_scores":{"market_microstructure_score":70.0}}'
+            ),
         }
         db.insert_correlation(correlation)
         
@@ -93,6 +98,176 @@ class TestAPI(unittest.TestCase):
         self.assertEqual(len(data), 1)
         self.assertEqual(data[0]["ticker"], "KXCABOUT-26DEC")
         self.assertEqual(data[0]["confidence_score"], 90.0)
+        self.assertIsNotNone(data[0].get("explanation"))
+        self.assertEqual(data[0]["explanation"]["score_type"], "leakage")
+
+    def test_settings_get_and_put(self):
+        original_path = config.CONFIG_PATH
+        original_backup = config.CONFIG_BACKUP_PATH
+        cfg_path = os.path.join(
+            os.path.dirname(self.test_db_path),
+            "test_pmwatch_settings_config.json",
+        )
+        backup_path = cfg_path + ".bak"
+        config.CONFIG_PATH = cfg_path
+        config.CONFIG_BACKUP_PATH = backup_path
+        try:
+            if os.path.exists(cfg_path):
+                os.remove(cfg_path)
+            config.save_config({
+                "scheduler_interval_minutes": 30,
+                "scheduled_events": {
+                    "enabled": True,
+                    "events": [
+                        {
+                            "label": "FOMC rate decision",
+                            "series": ["KXFED"],
+                            "dates": ["2026-06-18"],
+                            "window_hours_before": 48,
+                            "window_hours_after": 6,
+                            "temporal_floor": 0.85,
+                        }
+                    ],
+                },
+            })
+
+            get_resp = client.get("/api/settings")
+            self.assertEqual(get_resp.status_code, 200)
+            settings = get_resp.json()
+            self.assertEqual(settings["scheduler_interval_minutes"], 30)
+            self.assertTrue(settings["scheduled_events"]["enabled"])
+
+            put_resp = client.put("/api/settings", json={
+                "scheduler_interval_minutes": 45,
+                "scheduled_events": {
+                    "enabled": False,
+                    "events": [
+                        {
+                            "label": "FOMC rate decision",
+                            "temporal_floor": 0.9,
+                            "window_hours_before": 40,
+                        }
+                    ],
+                },
+            })
+            self.assertEqual(put_resp.status_code, 200)
+            body = put_resp.json()
+            self.assertEqual(body["status"], "ok")
+            self.assertIn("scheduler", body["restart_required"])
+            self.assertFalse(body["settings"]["scheduled_events"]["enabled"])
+        finally:
+            config.CONFIG_PATH = original_path
+            config.CONFIG_BACKUP_PATH = original_backup
+            if os.path.exists(cfg_path):
+                os.remove(cfg_path)
+            if os.path.exists(backup_path):
+                os.remove(backup_path)
+
+    def test_settings_threshold_put_round_trip(self):
+        original_path = config.CONFIG_PATH
+        original_backup = config.CONFIG_BACKUP_PATH
+        cfg_path = os.path.join(
+            os.path.dirname(self.test_db_path),
+            "test_pmwatch_threshold_config.json",
+        )
+        backup_path = cfg_path + ".bak"
+        config.CONFIG_PATH = cfg_path
+        config.CONFIG_BACKUP_PATH = backup_path
+        try:
+            config.save_config({"scheduler_interval_minutes": 30})
+            put_resp = client.put("/api/settings", json={
+                "correlation": {"min_confidence": 20.0, "min_match_quality": 0.5},
+                "matcher": {"min_ingest_quality": 0.45},
+                "scorer": {
+                    "yellow_score": 30.0,
+                    "red_score": 65.0,
+                    "dedup_hours": 3,
+                    "score_delta_threshold": 0.25,
+                },
+            })
+            self.assertEqual(put_resp.status_code, 200)
+            body = put_resp.json()
+            self.assertEqual(body["settings"]["correlation"]["min_confidence"], 20.0)
+            self.assertEqual(body["settings"]["matcher"]["min_ingest_quality"], 0.45)
+            self.assertEqual(body["settings"]["scorer"]["dedup_hours"], 3)
+
+            get_resp = client.get("/api/settings")
+            settings = get_resp.json()
+            self.assertEqual(settings["correlation"]["min_confidence"], 20.0)
+            self.assertEqual(config.get_min_correlation_confidence(), 20.0)
+        finally:
+            config.CONFIG_PATH = original_path
+            config.CONFIG_BACKUP_PATH = original_backup
+            if os.path.exists(cfg_path):
+                os.remove(cfg_path)
+            if os.path.exists(backup_path):
+                os.remove(backup_path)
+
+    def test_series_categories_endpoint(self):
+        response = client.get("/api/series-categories")
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual(data.get("KXFED"), "economic_data")
+        self.assertEqual(data.get("KXNEXTAG"), "executive_actions")
+
+    def test_anomalies_endpoint_includes_category(self):
+        db.insert_anomaly({
+            "ticker": "KXFED-26DEC-T4.5",
+            "market_title": "Fed funds market",
+            "series_ticker": "KXFED",
+            "risk_group": "Fed Funds Rate",
+            "mnpi_actors": "Fed governors",
+            "detected_ts": int(time.time()),
+            "detected_time": "2026-06-10T12:00:00Z",
+            "anomaly_score": 55.0,
+            "volume_zscore": 4.0,
+            "block_trade_ratio": 0.2,
+            "directional_flag": 0.1,
+            "trigger_type": "compound",
+            "price_before": 0.45,
+            "price_current": 0.50,
+            "volume_in_window": 500,
+            "correlated_event": None,
+            "notes": "test",
+        })
+        response = client.get("/api/anomalies?limit=5")
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual(data[0]["category"], "economic_data")
+
+    def test_anomalies_endpoint_includes_score_components(self):
+        db.insert_anomaly({
+            "ticker": "KXFED-26DEC-T4.5",
+            "market_title": "Fed funds market",
+            "series_ticker": "KXFED",
+            "risk_group": "FOMC",
+            "mnpi_actors": "Fed governors",
+            "detected_ts": int(time.time()),
+            "detected_time": "2026-06-10T12:00:00Z",
+            "anomaly_score": 55.0,
+            "volume_zscore": 4.0,
+            "block_trade_ratio": 0.2,
+            "directional_flag": 0.1,
+            "trigger_type": "compound",
+            "price_before": 0.45,
+            "price_current": 0.50,
+            "volume_in_window": 500,
+            "correlated_event": None,
+            "notes": "test",
+            "score_components": {
+                "base_score": 30.0,
+                "block_modifier": 1.2,
+                "price_bonus": 5.0,
+                "normalized_score": 55.0,
+                "trigger_type": "compound",
+            },
+        })
+        response = client.get("/api/anomalies?limit=5")
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertTrue(data)
+        self.assertIsNotNone(data[0].get("score_components"))
+        self.assertEqual(data[0]["score_components"]["normalized_score"], 55.0)
 
     def test_cross_market_clusters_endpoint(self):
         """Verify that GET /api/cross-market-clusters returns persisted clusters."""

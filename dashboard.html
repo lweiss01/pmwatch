@@ -474,6 +474,9 @@
       <span class="nav-item-meta"><span class="nav-icon">🔮</span>Leakage Correlations</span>
       <span class="nav-badge" id="badgeCorrelations">0</span>
     </div>
+    <div class="nav-item" id="navSettings" onclick="switchView('settings')">
+      <span class="nav-item-meta"><span class="nav-icon">⚙</span>Settings</span>
+    </div>
 
     <div class="col-section-hdr">Overview Stats</div>
     <div class="stat-card">
@@ -550,14 +553,14 @@ const MOCK = {
   anomalies: [
     {
       id: 1, ticker: "KXFED-26DEC-T4.5", market_title: "Will the Fed lower interest rates in December?",
-      series_ticker: "KXFED", risk_group: "economic_data", mnpi_actors: "FOMC members, Federal Reserve staff",
+      series_ticker: "KXFED", category: "economic_data", risk_group: "Fed Funds Rate", mnpi_actors: "FOMC members, Federal Reserve staff",
       detected_time: new Date(Date.now() - 7200*1000).toISOString(), anomaly_score: 110, volume_zscore: 4.8,
       block_trade_ratio: 0.35, trigger_type: "Volume Spike", price_before: 0.45, price_current: 0.65,
       volume_in_window: 25000, notes: "Sudden order flow block trading minutes before FOMC minutes leaked."
     },
     {
       id: 2, ticker: "KXNEXTAG-29-TBLA", market_title: "Will Todd Blanche be confirmed as Attorney General?",
-      series_ticker: "KXNEXTAG", risk_group: "executive_actions", mnpi_actors: "Senate Judiciary Committee, Transition Team",
+      series_ticker: "KXNEXTAG", category: "executive_actions", risk_group: "Next AG", mnpi_actors: "Senate Judiciary Committee, Transition Team",
       detected_time: new Date(Date.now() - 14400*1000).toISOString(), anomaly_score: 95, volume_zscore: 3.2,
       block_trade_ratio: 0.15, trigger_type: "Price Jump", price_before: 0.70, price_current: 0.85,
       volume_in_window: 12000, notes: "Unusual position build-up by new accounts."
@@ -566,7 +569,7 @@ const MOCK = {
   clusters: [
     {
       ticker: "KXFED-26DEC-T4.5", market_title: "Will the Fed lower interest rates in December?",
-      series_ticker: "KXFED", risk_group: "economic_data", anomaly_count: 2, cluster_score: 180,
+      series_ticker: "KXFED", category: "economic_data", risk_group: "Fed Funds Rate", anomaly_count: 2, cluster_score: 180,
       first_seen_time: new Date(Date.now() - 14400*1000).toISOString(),
       last_seen_time: new Date(Date.now() - 7200*1000).toISOString(),
       first_seen_ts: Math.floor(Date.now() / 1000) - 14400,
@@ -601,8 +604,27 @@ const CAT_LABELS = {
   economic_data: 'Economic', geopolitical: 'Geopolitical', congressional: 'Congressional'
 };
 
+// Watchlist series → category (client-side fallback when API omits category)
+const SERIES_CATEGORY_MAP = {
+  KXCABOUT: 'executive_actions', KXNEXTAG: 'executive_actions', KXNEXTDEF: 'executive_actions',
+  KXNEXTSTATE: 'executive_actions', KXNEXTODNI: 'executive_actions', KXTRUMPPARDONS: 'executive_actions',
+  KXTRUMPPARDONFAMILY: 'executive_actions', KXINSURRECTION: 'executive_actions', KXMARTIAL: 'executive_actions',
+  KXHABEAS: 'executive_actions', KXWITHDRAW: 'executive_actions', KXDOED: 'executive_actions',
+  KXAGENCYELIM: 'executive_actions', KXEOTRUMPTERM: 'executive_actions', KXAMEND25: 'executive_actions',
+  KXTRUMPRESIGN: 'executive_actions',
+  KXFED: 'economic_data', KXCPI: 'economic_data', KXGDP: 'economic_data',
+  KXGREENTERRITORY: 'geopolitical', KXCANTERRITORY: 'geopolitical', KXCANAL: 'geopolitical',
+  KXRECOGROC: 'geopolitical', KXZELENSKYPUTIN: 'geopolitical', KXUSAKIM: 'geopolitical',
+  KXABRAHAMSA: 'geopolitical', KXABRAHAMSY: 'geopolitical',
+  KXHOUSE: 'congressional', KXSENATE: 'congressional', KXIMPEACH: 'congressional',
+  KXVETOOVERRIDE: 'congressional', KXGOVSHUT: 'congressional', KXCR: 'congressional',
+  KXSCOTUSRESIGN: 'scotus', KXSCOTUSCHANGE: 'scotus', KXSCOURT: 'scotus',
+  KXTARIFFS: 'scotus', KXSCOTUSPOWER: 'scotus',
+};
+
 // Global state
-let currentView = 'anomalies'; // anomalies | clusters | microstructure | correlations
+let currentView = 'anomalies'; // anomalies | clusters | microstructure | correlations | settings
+let allSettings = null;
 let currentFilter = 'all';
 let selectedId = null;
 let allAnomalies = [];
@@ -681,10 +703,45 @@ function switchView(view) {
     } else if (view === 'correlations') {
       feedTitle.textContent = '🔮 Information Leakage Correlations';
       renderCorrelations();
+    } else if (view === 'settings') {
+      feedTitle.textContent = '⚙ Operator Settings';
+      renderSettings();
     }
   }
   
-  document.getElementById('detailPanel').innerHTML = `<div class="detail-empty">← Select an item to drill down</div>`;
+  if (view !== 'settings') {
+    document.getElementById('detailPanel').innerHTML = `<div class="detail-empty">← Select an item to drill down</div>`;
+  }
+}
+
+function categoryForSeries(seriesTicker) {
+  if (!seriesTicker) return '';
+  return SERIES_CATEGORY_MAP[seriesTicker] || '';
+}
+
+function enrichFeedItem(item) {
+  const category = item.category || categoryForSeries(item.series_ticker) || (
+    item.risk_group && CAT_LABELS[item.risk_group] ? item.risk_group : ''
+  );
+  return category ? { ...item, category } : item;
+}
+
+function itemCategory(item) {
+  if (item.category) return item.category;
+  const fromSeries = categoryForSeries(item.series_ticker);
+  if (fromSeries) return fromSeries;
+  // Back-compat for rows that only expose risk_group as a category slug.
+  if (item.risk_group && CAT_LABELS[item.risk_group]) return item.risk_group;
+  return '';
+}
+
+function matchesCategoryFilter(item) {
+  return currentFilter === 'all' || itemCategory(item) === currentFilter;
+}
+
+function categoryLabel(item) {
+  const category = itemCategory(item);
+  return CAT_LABELS[category] || item.risk_group || category || 'Unknown';
 }
 
 function filterFeed(filter, tabEl) {
@@ -699,12 +756,76 @@ function filterFeed(filter, tabEl) {
 }
 
 function formatLeadTime(sec) {
-  if (sec < 60) return `${sec}s`;
-  const mins = Math.floor(sec / 60);
+  const abs = Math.abs(sec);
+  if (abs < 60) return `${abs}s`;
+  const mins = Math.floor(abs / 60);
   if (mins < 60) return `${mins}m`;
   const hrs = Math.floor(mins / 60);
   const remMins = mins % 60;
   return `${hrs}h ${remMins}m`;
+}
+
+function correlationScoreType(c) {
+  if (c.explanation && c.explanation.score_type) return c.explanation.score_type;
+  return c.lead_time_seconds >= 0 ? 'leakage' : 'reaction';
+}
+
+function renderAnomalyScoreBreakdown(a) {
+  const comps = a.score_components;
+  if (!comps) {
+    return `<div style="font-size:12px;color:var(--text-secondary)">No structured score components stored. New scorer runs will populate this field.</div>`;
+  }
+  return `
+    <div style="font-size:12px;color:var(--text-secondary);line-height:1.6">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
+        <span>Base score: ${comps.base_score ?? '—'}</span>
+        <span>Block modifier: ${comps.block_modifier ?? '—'}</span>
+        <span>Price bonus: ${comps.price_bonus ?? '—'}</span>
+        <span>Clearance: ${comps.clearance_multiplier ?? '—'}</span>
+        <span>Raw score: ${comps.raw_score ?? '—'}</span>
+        <span>Normalized: ${comps.normalized_score ?? '—'}</span>
+      </div>
+      <div style="margin-top:8px">
+        Formula: (base × block_mod) + price_bonus, capped at 100 · trigger=${comps.trigger_type || a.trigger_type || '—'}
+      </div>
+    </div>
+  `;
+}
+
+function renderExplanationBreakdown(c) {
+  const exp = c.explanation;
+  if (!exp) {
+    return `<div class="detail-val" style="font-size:12px;color:var(--text-secondary)">${c.notes || 'No structured explanation stored. Rebuild correlations to populate.'}</div>`;
+  }
+  const match = exp.match || {};
+  const subs = exp.sub_scores || {};
+  const matched = [
+    ...(match.matched_anchors || []),
+    ...(match.matched_signals || []),
+    ...(match.matched_required || []),
+  ];
+  const chips = matched.slice(0, 8).map(t => `<span class="feed-chip purple">${t}</span>`).join(' ');
+  const eventLine = exp.expected_event
+    ? `<div style="margin-top:8px;font-size:11px;color:var(--text-secondary)">Event window: <strong>${exp.expected_event.expected_event || ''}</strong> (${exp.expected_event.event_date || ''})</div>`
+    : '';
+  const rejectLine = exp.reject_reason
+    ? `<div style="margin-top:8px;font-size:11px;color:var(--yellow)">Reject reason: ${exp.reject_reason}</div>`
+    : '';
+  return `
+    <div style="font-size:12px;color:var(--text-secondary);line-height:1.5">
+      <div><strong>Score type:</strong> ${exp.score_type || correlationScoreType(c)}</div>
+      <div style="margin-top:6px"><strong>Matched terms:</strong> ${chips || '—'}</div>
+      <div style="margin-top:8px;display:grid;grid-template-columns:1fr 1fr;gap:6px">
+        <span>Microstructure: ${subs.market_microstructure_score ?? '—'}</span>
+        <span>Relevance: ${subs.correlation_relevance_score ?? '—'}</span>
+        <span>Source cred: ${subs.source_credibility_score ?? '—'}</span>
+        <span>Plausibility: ${subs.leakage_plausibility_score ?? '—'}</span>
+      </div>
+      ${eventLine}
+      <div style="margin-top:8px">${exp.final_rationale || c.notes || ''}</div>
+      ${rejectLine}
+    </div>
+  `;
 }
 
 function renderAnomalies() {
@@ -712,7 +833,7 @@ function renderAnomalies() {
   let filtered = allAnomalies;
   
   if (currentFilter !== 'all') {
-    filtered = allAnomalies.filter(a => a.risk_group === currentFilter);
+    filtered = allAnomalies.filter(matchesCategoryFilter);
   }
   
   // Apply sorting
@@ -754,7 +875,7 @@ function renderAnomalies() {
         <div class="feed-item-main">
           <div class="feed-item-top">
             <span class="feed-ticker">${a.ticker}</span>
-            <span class="feed-cat">${CAT_LABELS[a.risk_group] || a.risk_group}</span>
+            <span class="feed-cat">${categoryLabel(a)}</span>
           </div>
           <div class="feed-title-text">${a.market_title}</div>
           <div class="feed-meta">
@@ -815,7 +936,7 @@ function renderClusters() {
   let filtered = allClusters;
   
   if (currentFilter !== 'all') {
-    filtered = allClusters.filter(c => c.risk_group === currentFilter);
+    filtered = allClusters.filter(matchesCategoryFilter);
   }
   
   // Apply sorting
@@ -856,7 +977,7 @@ function renderClusters() {
         <div class="feed-item-main">
           <div class="feed-item-top">
             <span class="feed-ticker">${c.ticker}</span>
-            <span class="feed-cat">${CAT_LABELS[c.risk_group] || c.risk_group}</span>
+            <span class="feed-cat">${categoryLabel(c)}</span>
           </div>
           <div class="feed-title-text">${c.market_title}</div>
           <div class="feed-meta">
@@ -923,19 +1044,22 @@ function renderCorrelations() {
   
   list.innerHTML = allCorrelations.map((c, idx) => {
     const isSel = idx === selectedId ? ' corr-selected' : '';
+    const scoreType = correlationScoreType(c);
+    const typeLabel = scoreType === 'leakage' ? 'Pre-news leakage' : 'Market reaction';
+    const typeColor = scoreType === 'leakage' ? 'purple' : 'cyan';
     return `
       <div class="feed-item${isSel}" onclick="selectCorrelation(${idx})">
         <div class="feed-item-main">
           <div class="feed-item-top">
             <span class="feed-ticker">${c.ticker}</span>
-            <span class="feed-cat" style="color:var(--purple);background:var(--purple-glow)">Leakage Mapped</span>
+            <span class="feed-cat" style="color:var(--${typeColor});background:var(--${typeColor}-glow)">${typeLabel}</span>
           </div>
           <div class="feed-title-text">
             <strong>News:</strong> ${c.news_title}
           </div>
           <div class="feed-meta">
-            <span class="feed-chip purple">Conf: ${c.confidence_score}%</span>
-            <span class="feed-chip">Lead: ${formatLeadTime(c.lead_time_seconds)}</span>
+            <span class="feed-chip purple">Conf: ${c.confidence_score}</span>
+            <span class="feed-chip">${c.lead_time_seconds >= 0 ? 'Lead' : 'Lag'}: ${formatLeadTime(c.lead_time_seconds)}</span>
             <span class="feed-chip">${c.news_source}</span>
           </div>
         </div>
@@ -975,6 +1099,11 @@ async function selectAnomaly(id) {
       <div style="margin-top:10px">
         <a href="https://kalshi.com/markets/${a.series_ticker.toLowerCase()}" target="_blank" style="color:var(--cyan);text-decoration:none;font-weight:600">↗ Open on Kalshi</a>
       </div>
+    </div>
+
+    <div class="detail-block">
+      <div class="detail-key">Score Breakdown</div>
+      ${renderAnomalyScoreBreakdown(a)}
     </div>
 
     <div class="detail-block">
@@ -1097,14 +1226,31 @@ async function selectCorrelation(idx) {
   
   const c = allCorrelations[idx];
   if (!c) return;
+
+  const scoreType = correlationScoreType(c);
+  const isLeakage = scoreType === 'leakage';
+  const scoreColor = isLeakage ? 'purple' : 'cyan';
+  const timingLabel = isLeakage
+    ? `Pre-news lead time: ${formatLeadTime(c.lead_time_seconds)}`
+    : `Post-publication reaction lag: ${formatLeadTime(c.lead_time_seconds)}`;
+  const anomalyTiming = isLeakage
+    ? `${formatLeadTime(c.lead_time_seconds)} before news`
+    : `${formatLeadTime(c.lead_time_seconds)} after news`;
+  const newsBadge = isLeakage ? 'News publication' : 'News preceded anomaly';
+  const anomalyBadge = isLeakage ? 'Pre-positioning spike' : 'Post-news market reaction';
   
   document.getElementById('detailPanel').innerHTML = `
     <div class="detail-block">
       <div class="detail-key">Correlation Confidence</div>
-      <div class="detail-score-big purple">${c.confidence_score}%</div>
+      <div class="detail-score-big ${scoreColor}">${c.confidence_score}</div>
       <div style="font-size:11px;color:var(--text-secondary);margin-top:6px">
-        Calculated Information Leakage Lead Time: <strong>${formatLeadTime(c.lead_time_seconds)}</strong>
+        <strong>${isLeakage ? 'Leakage' : 'Reaction'}</strong> score · ${timingLabel}
       </div>
+    </div>
+
+    <div class="detail-block">
+      <div class="detail-key">Score Breakdown</div>
+      ${renderExplanationBreakdown(c)}
     </div>
 
     <div class="detail-block">
@@ -1114,25 +1260,25 @@ async function selectCorrelation(idx) {
           <div class="timeline-bullet"></div>
           <div class="timeline-content">
             <div class="timeline-time">${new Date(c.news_time).toLocaleString()}</div>
-            <div class="timeline-title">Primary Government Feed Drop</div>
+            <div class="timeline-title">${c.news_source_type === 'primary_gov' ? 'Primary Government Feed Drop' : 'News Publication'}</div>
             <div class="timeline-desc">
               <strong>Source:</strong> ${c.news_source} (${c.news_source_type})<br>
               <strong>Headline:</strong> <a href="${c.news_url}" target="_blank" style="color:var(--cyan);text-decoration:none">${c.news_title}</a>
             </div>
-            <span class="lead-badge">Leakage drop</span>
+            <span class="lead-badge">${newsBadge}</span>
           </div>
         </div>
         
         <div class="timeline-node active2">
           <div class="timeline-bullet"></div>
           <div class="timeline-content">
-            <div class="timeline-time">${formatLeadTime(c.lead_time_seconds)} earlier</div>
+            <div class="timeline-time">${anomalyTiming}</div>
             <div class="timeline-title">Abnormal Volume / Price Action</div>
             <div class="timeline-desc">
               <strong>Market:</strong> ${c.market_title} (${c.ticker})<br>
               <strong>Anomaly Threat Score:</strong> ${Math.round(c.anomaly_score)}
             </div>
-            <span class="lead-badge" style="color:var(--cyan);background:var(--cyan-glow);border-color:rgba(6,182,212,0.2)">Pre-positioning spike</span>
+            <span class="lead-badge" style="color:var(--cyan);background:var(--cyan-glow);border-color:rgba(6,182,212,0.2)">${anomalyBadge}</span>
           </div>
         </div>
       </div>
@@ -1277,6 +1423,278 @@ async function loadClusterEventsTimeline(ticker, firstSeenTs) {
   }
 }
 
+function renderSettingsStatus(message, isError = false) {
+  const panel = document.getElementById('detailPanel');
+  if (!panel) return;
+  panel.innerHTML = `
+    <div class="detail-block">
+      <div class="detail-key">Settings Status</div>
+      <div class="detail-val" style="font-size:12px;color:${isError ? 'var(--red)' : 'var(--green)'}">
+        ${message}
+      </div>
+    </div>
+  `;
+}
+
+async function loadSettings() {
+  const resp = await fetch('/api/settings');
+  allSettings = await resp.json();
+  return allSettings;
+}
+
+async function renderSettings() {
+  const list = document.getElementById('feedList');
+  document.getElementById('feedCount').textContent = 'local config';
+  try {
+    const settings = await loadSettings();
+    const events = settings.scheduled_events?.events || [];
+    const refresh = settings.scheduled_events?.refresh || {};
+    const correlation = settings.correlation || {};
+    const matcher = settings.matcher || {};
+    const scorer = settings.scorer || {};
+    const thresholdDefaults = settings.threshold_defaults || {};
+
+    list.innerHTML = `
+      <div style="padding:16px 18px;display:flex;flex-direction:column;gap:18px;">
+        <div style="font-size:12px;color:var(--yellow);padding:10px 12px;border:1px solid rgba(234,179,8,0.25);border-radius:8px;background:rgba(234,179,8,0.08)">
+          Local-only settings API (no auth). Restart <code style="color:var(--cyan)">scheduler.py</code> after changing poll interval.
+        </div>
+
+        <div class="detail-block" style="margin:0">
+          <div class="detail-key">General</div>
+          <label style="font-size:12px;color:var(--text-secondary)">Scheduler interval (minutes)</label>
+          <input id="settingsSchedulerInterval" type="number" min="5" max="1440" value="${settings.scheduler_interval_minutes}"
+            style="margin-top:6px;width:120px;background:rgba(15,23,42,0.8);color:var(--text-primary);border:1px solid rgba(255,255,255,0.1);border-radius:6px;padding:6px 10px;">
+        </div>
+
+        <div class="detail-block" style="margin:0">
+          <div class="detail-key">Leakage Correlation</div>
+          <label style="font-size:12px;color:var(--text-secondary);display:flex;align-items:center;gap:8px;margin-top:6px">
+            <input id="settingsEventsEnabled" type="checkbox" ${settings.scheduled_events?.enabled ? 'checked' : ''}>
+            Enable scheduled event temporal floors
+          </label>
+          <div style="margin-top:10px;font-size:11px;color:var(--text-secondary)">
+            Calendar refresh: <strong>${refresh.last_status || 'pending'}</strong>
+            ${refresh.last_refresh ? ` · ${new Date(refresh.last_refresh).toLocaleString()}` : ''}
+          </div>
+        </div>
+
+        <div class="detail-block" style="margin:0">
+          <div class="detail-key">Event Windows</div>
+          ${events.map((event, idx) => `
+            <div style="margin-top:12px;padding:10px;border:1px solid rgba(255,255,255,0.06);border-radius:8px">
+              <div style="font-weight:600;font-size:13px">${event.label}</div>
+              <div style="font-size:11px;color:var(--text-secondary);margin-top:4px">
+                ${event.dates_count} dates · next ${event.next_date || 'none'}
+              </div>
+              <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:8px">
+                <label style="font-size:11px;color:var(--text-secondary)">Floor
+                  <input class="settings-event-floor" data-label="${event.label}" type="number" min="0.3" max="1" step="0.05" value="${event.temporal_floor}"
+                    style="display:block;margin-top:4px;width:100%;background:rgba(15,23,42,0.8);color:var(--text-primary);border:1px solid rgba(255,255,255,0.1);border-radius:6px;padding:4px 8px;">
+                </label>
+                <label style="font-size:11px;color:var(--text-secondary)">Before (h)
+                  <input class="settings-event-before" data-label="${event.label}" type="number" min="1" max="168" value="${event.window_hours_before}"
+                    style="display:block;margin-top:4px;width:100%;background:rgba(15,23,42,0.8);color:var(--text-primary);border:1px solid rgba(255,255,255,0.1);border-radius:6px;padding:4px 8px;">
+                </label>
+                <label style="font-size:11px;color:var(--text-secondary)">After (h)
+                  <input class="settings-event-after" data-label="${event.label}" type="number" min="1" max="168" value="${event.window_hours_after}"
+                    style="display:block;margin-top:4px;width:100%;background:rgba(15,23,42,0.8);color:var(--text-primary);border:1px solid rgba(255,255,255,0.1);border-radius:6px;padding:4px 8px;">
+                </label>
+              </div>
+            </div>
+          `).join('')}
+        </div>
+
+        <div class="detail-block" style="margin:0">
+          <div class="detail-key">Detection Thresholds</div>
+          <div style="font-size:11px;color:var(--text-secondary);margin-top:4px">
+            Correlation and scorer floors take effect on the next ingest/score/correlation run.
+          </div>
+          <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-top:10px">
+            <label style="font-size:11px;color:var(--text-secondary)">Min correlation confidence
+              <input id="settingsMinConfidence" type="number" min="1" max="100" step="0.5" value="${correlation.min_confidence}"
+                style="display:block;margin-top:4px;width:100%;background:rgba(15,23,42,0.8);color:var(--text-primary);border:1px solid rgba(255,255,255,0.1);border-radius:6px;padding:4px 8px;">
+            </label>
+            <label style="font-size:11px;color:var(--text-secondary)">Min match quality
+              <input id="settingsMinMatchQuality" type="number" min="0.1" max="1" step="0.05" value="${correlation.min_match_quality}"
+                style="display:block;margin-top:4px;width:100%;background:rgba(15,23,42,0.8);color:var(--text-primary);border:1px solid rgba(255,255,255,0.1);border-radius:6px;padding:4px 8px;">
+            </label>
+            <label style="font-size:11px;color:var(--text-secondary)">Min ingest quality
+              <input id="settingsMinIngestQuality" type="number" min="0.1" max="1" step="0.05" value="${matcher.min_ingest_quality}"
+                style="display:block;margin-top:4px;width:100%;background:rgba(15,23,42,0.8);color:var(--text-primary);border:1px solid rgba(255,255,255,0.1);border-radius:6px;padding:4px 8px;">
+            </label>
+            <label style="font-size:11px;color:var(--text-secondary)">Yellow score floor
+              <input id="settingsYellowScore" type="number" min="1" max="99" step="1" value="${scorer.yellow_score}"
+                style="display:block;margin-top:4px;width:100%;background:rgba(15,23,42,0.8);color:var(--text-primary);border:1px solid rgba(255,255,255,0.1);border-radius:6px;padding:4px 8px;">
+            </label>
+            <label style="font-size:11px;color:var(--text-secondary)">Red score tier
+              <input id="settingsRedScore" type="number" min="2" max="100" step="1" value="${scorer.red_score}"
+                style="display:block;margin-top:4px;width:100%;background:rgba(15,23,42,0.8);color:var(--text-primary);border:1px solid rgba(255,255,255,0.1);border-radius:6px;padding:4px 8px;">
+            </label>
+            <label style="font-size:11px;color:var(--text-secondary)">Dedup window (hours)
+              <input id="settingsDedupHours" type="number" min="1" max="48" step="1" value="${scorer.dedup_hours}"
+                style="display:block;margin-top:4px;width:100%;background:rgba(15,23,42,0.8);color:var(--text-primary);border:1px solid rgba(255,255,255,0.1);border-radius:6px;padding:4px 8px;">
+            </label>
+            <label style="font-size:11px;color:var(--text-secondary)">Score delta threshold
+              <input id="settingsScoreDelta" type="number" min="0.05" max="1" step="0.05" value="${scorer.score_delta_threshold}"
+                style="display:block;margin-top:4px;width:100%;background:rgba(15,23,42,0.8);color:var(--text-primary);border:1px solid rgba(255,255,255,0.1);border-radius:6px;padding:4px 8px;">
+            </label>
+          </div>
+          <button onclick="resetThresholdDefaults()" style="margin-top:10px;background:rgba(255,255,255,0.04);color:var(--text-secondary);border:1px solid rgba(255,255,255,0.1);border-radius:6px;padding:6px 12px;font-size:11px;cursor:pointer">
+            Reset thresholds to defaults
+          </button>
+        </div>
+
+        <div style="display:flex;gap:10px;flex-wrap:wrap">
+          <button onclick="saveSettings()" style="background:var(--cyan);color:#0f172a;border:none;border-radius:6px;padding:8px 14px;font-weight:600;cursor:pointer">Save settings</button>
+          <button onclick="refreshEventCalendar()" style="background:rgba(139,92,246,0.2);color:var(--purple);border:1px solid rgba(139,92,246,0.35);border-radius:6px;padding:8px 14px;font-weight:600;cursor:pointer">Refresh event calendar</button>
+          <button onclick="rebuildCorrelationsFromSettings()" style="background:rgba(6,182,212,0.15);color:var(--cyan);border:1px solid rgba(6,182,212,0.3);border-radius:6px;padding:8px 14px;font-weight:600;cursor:pointer">Rebuild correlations</button>
+        </div>
+      </div>
+    `;
+
+    document.getElementById('detailPanel').innerHTML = `
+      <div class="detail-block">
+        <div class="detail-key">Settings Help</div>
+        <div class="detail-val" style="font-size:12px;color:var(--text-secondary);line-height:1.5">
+          Tune scheduled-event floors, correlation gates, and scorer thresholds here.
+          Use calendar refresh monthly (automated on the 1st) or trigger manually after official schedule updates.
+          After changing correlation thresholds, run Rebuild correlations to re-evaluate recent rows.
+        </div>
+      </div>
+    `;
+  } catch (e) {
+    list.innerHTML = `<div class="empty-state"><div class="empty-text">Failed to load settings: ${e.message}</div></div>`;
+    renderSettingsStatus(`Failed to load settings: ${e.message}`, true);
+  }
+}
+
+function collectSettingsPatch() {
+  const events = (allSettings?.scheduled_events?.events || []).map(event => ({
+    label: event.label,
+    temporal_floor: parseFloat(
+      document.querySelector(`.settings-event-floor[data-label="${event.label}"]`)?.value
+      || event.temporal_floor
+    ),
+    window_hours_before: parseInt(
+      document.querySelector(`.settings-event-before[data-label="${event.label}"]`)?.value
+      || event.window_hours_before,
+      10
+    ),
+    window_hours_after: parseInt(
+      document.querySelector(`.settings-event-after[data-label="${event.label}"]`)?.value
+      || event.window_hours_after,
+      10
+    ),
+  }));
+
+  return {
+    scheduler_interval_minutes: parseInt(document.getElementById('settingsSchedulerInterval').value, 10),
+    scheduled_events: {
+      enabled: document.getElementById('settingsEventsEnabled').checked,
+      events,
+    },
+    correlation: {
+      min_confidence: parseFloat(document.getElementById('settingsMinConfidence').value),
+      min_match_quality: parseFloat(document.getElementById('settingsMinMatchQuality').value),
+    },
+    matcher: {
+      min_ingest_quality: parseFloat(document.getElementById('settingsMinIngestQuality').value),
+    },
+    scorer: {
+      yellow_score: parseFloat(document.getElementById('settingsYellowScore').value),
+      red_score: parseFloat(document.getElementById('settingsRedScore').value),
+      dedup_hours: parseInt(document.getElementById('settingsDedupHours').value, 10),
+      score_delta_threshold: parseFloat(document.getElementById('settingsScoreDelta').value),
+    },
+  };
+}
+
+async function resetThresholdDefaults() {
+  try {
+    const settings = allSettings || await loadSettings();
+    const defaults = settings.threshold_defaults;
+    if (!defaults) {
+      renderSettingsStatus('Threshold defaults unavailable.', true);
+      return;
+    }
+    const resp = await fetch('/api/settings', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        correlation: defaults.correlation,
+        matcher: defaults.matcher,
+        scorer: defaults.scorer,
+      }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) {
+      renderSettingsStatus((data.errors || ['Reset failed']).join('; '), true);
+      return;
+    }
+    allSettings = data.settings;
+    renderSettingsStatus('Thresholds reset to defaults.');
+    await renderSettings();
+  } catch (e) {
+    renderSettingsStatus(`Reset failed: ${e.message}`, true);
+  }
+}
+
+async function saveSettings() {
+  try {
+    const patch = collectSettingsPatch();
+    const resp = await fetch('/api/settings', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(patch),
+    });
+    const data = await resp.json();
+    if (!resp.ok) {
+      renderSettingsStatus((data.errors || ['Save failed']).join('; '), true);
+      return;
+    }
+    allSettings = data.settings;
+    let msg = 'Settings saved.';
+    if ((data.restart_required || []).includes('scheduler')) {
+      msg += ' Restart scheduler.py to apply the new poll interval.';
+    }
+    renderSettingsStatus(msg);
+    await renderSettings();
+  } catch (e) {
+    renderSettingsStatus(`Save failed: ${e.message}`, true);
+  }
+}
+
+async function refreshEventCalendar() {
+  try {
+    renderSettingsStatus('Refreshing event calendar...');
+    const resp = await fetch('/api/settings/refresh-calendar', { method: 'POST' });
+    const data = await resp.json();
+    allSettings = data.settings;
+    const sourceSummary = (data.sources || []).map(s => `${s.source}: ${s.status}`).join(', ');
+    renderSettingsStatus(
+      `Calendar refresh ${data.status}. updated=${data.updated}. ${sourceSummary}`
+    );
+    await renderSettings();
+  } catch (e) {
+    renderSettingsStatus(`Calendar refresh failed: ${e.message}`, true);
+  }
+}
+
+async function rebuildCorrelationsFromSettings() {
+  try {
+    renderSettingsStatus('Rebuilding correlations...');
+    const resp = await fetch('/api/correlations/rebuild?lookback_days=30', { method: 'POST' });
+    const data = await resp.json();
+    renderSettingsStatus(
+      `Correlations rebuilt. removed=${data.removed}, inserted=${data.inserted}`
+    );
+    loadAll();
+  } catch (e) {
+    renderSettingsStatus(`Rebuild failed: ${e.message}`, true);
+  }
+}
+
 async function triggerManualRun() {
   const btn = event.target;
   const originalText = btn.textContent;
@@ -1347,12 +1765,12 @@ async function loadAll() {
     
     // Load anomalies
     const anomaliesResp = await fetch('/api/anomalies?limit=100');
-    allAnomalies = await anomaliesResp.json();
+    allAnomalies = (await anomaliesResp.json()).map(enrichFeedItem);
     document.getElementById('badgeAnomalies').textContent = allAnomalies.length;
     
     // Load clusters
     const clustersResp = await fetch('/api/clusters');
-    allClusters = await clustersResp.json();
+    allClusters = (await clustersResp.json()).map(enrichFeedItem);
     document.getElementById('badgeClusters').textContent = allClusters.length;
     
     // Load microstructure
@@ -1370,8 +1788,8 @@ async function loadAll() {
   } catch (e) {
     console.warn('API unavailable, falling back to mock environment.', e);
     document.getElementById('simBanner').style.display = 'flex';
-    allAnomalies = MOCK.anomalies;
-    allClusters = MOCK.clusters;
+    allAnomalies = MOCK.anomalies.map(enrichFeedItem);
+    allClusters = MOCK.clusters.map(enrichFeedItem);
     allMicrostructure = MOCK.microstructure;
     allCorrelations = MOCK.correlations;
     
@@ -1395,6 +1813,8 @@ async function loadAll() {
     renderMicrostructure();
   } else if (currentView === 'correlations') {
     renderCorrelations();
+  } else if (currentView === 'settings') {
+    renderSettings();
   }
   document.getElementById('lastUpdate').textContent = new Date().toLocaleTimeString();
 }

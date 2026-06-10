@@ -5,6 +5,7 @@ from unittest.mock import patch
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import config
 import scorer
 
 
@@ -154,6 +155,50 @@ class TestScorerHygiene(unittest.TestCase):
     def test_clearance_multiplier_defaults_to_one(self):
         self.assertEqual(scorer.clearance_multiplier({}), 1.0)
         self.assertEqual(scorer.clearance_multiplier({"clearance_tier": 2}), 1.1)
+
+    @patch.object(config, "get_yellow_score", return_value=80.0)
+    @patch.object(scorer, "price_divergence_from_trades")
+    @patch.object(scorer, "block_trade_signal_from_trades")
+    @patch.object(scorer, "volume_zscore_from_trades")
+    def test_yellow_threshold_reads_config(
+        self, mock_vol, mock_block, mock_price, _mock_yellow
+    ):
+        mock_vol.return_value = 3.0
+        mock_block.return_value = {"ratio": 0.1, "directional_no": 0.0, "count": 20}
+        mock_price.return_value = {
+            "max_jump": 0.05,
+            "direction": "up",
+            "price_now": 0.50,
+            "price_before": 0.45,
+        }
+
+        result = scorer.score_market("KXFED-TEST", _market(), _minimal_trades(), None)
+        self.assertIsNone(result)
+
+    @patch.object(scorer, "price_divergence_from_trades")
+    @patch.object(scorer, "block_trade_signal_from_trades")
+    @patch.object(scorer, "volume_zscore_from_trades")
+    def test_notes_include_score_components(self, mock_vol, mock_block, mock_price):
+        mock_vol.return_value = 4.0
+        mock_block.return_value = {"ratio": 0.2, "directional_no": 0.1, "count": 20}
+        mock_price.return_value = {
+            "max_jump": 0.08,
+            "direction": "up",
+            "price_now": 0.52,
+            "price_before": 0.45,
+        }
+
+        result = scorer.score_market("KXFED-TEST", _market(), _minimal_trades(), None)
+        self.assertIsNotNone(result)
+        self.assertIn("base=", result["notes"])
+        self.assertIn("block_mod=", result["notes"])
+        self.assertIn("price_bonus=", result["notes"])
+        self.assertIn("clearance=", result["notes"])
+        comps = result["score_components"]
+        self.assertIn("base_score", comps)
+        self.assertIn("block_modifier", comps)
+        self.assertIn("normalized_score", comps)
+        self.assertEqual(comps["normalized_score"], result["anomaly_score"])
 
 
 if __name__ == "__main__":

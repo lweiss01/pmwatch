@@ -1,7 +1,10 @@
 import sqlite3
 import logging
 import json
-from fastapi import FastAPI
+from dataclasses import asdict
+
+import event_calendar_refresh
+from fastapi import Body, FastAPI
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pathlib import Path
@@ -11,8 +14,15 @@ import scorer
 from cluster_scorer import run_cluster_scorer
 from cross_market_scorer import run_cross_market_scorer
 import config
+import watchlist_loader
 
 log = logging.getLogger(__name__)
+
+
+def _attach_category(rows: list[dict]) -> list[dict]:
+    for row in rows:
+        row["category"] = watchlist_loader.category_for_series(row.get("series_ticker"))
+    return rows
 
 SCHEDULER_INTERVAL = config.get_scheduler_interval()
 
@@ -28,9 +38,18 @@ app.add_middleware(
 HTML_PATH = Path(__file__).parent / "dashboard.html"
 
 
+@app.get("/api/series-categories")
+def get_series_categories():
+    """Return watchlist series → category slug map for dashboard filters."""
+    return JSONResponse(watchlist_loader.series_category_map())
+
+
 @app.get("/", response_class=HTMLResponse)
 def root():
-    return HTML_PATH.read_text(encoding="utf-8")
+    return HTMLResponse(
+        content=HTML_PATH.read_text(encoding="utf-8"),
+        headers={"Cache-Control": "no-cache"},
+    )
 
 
 @app.get("/api/anomalies")
@@ -42,12 +61,14 @@ def get_anomalies(limit: int = 50):
             id, ticker, market_title, series_ticker, risk_group,
             mnpi_actors, detected_time, anomaly_score, volume_zscore,
             block_trade_ratio, trigger_type, price_before,
-            price_current, volume_in_window, notes
+            price_current, volume_in_window, notes, score_components_json
         FROM anomalies
         ORDER BY detected_ts DESC
         LIMIT ?
     """, (limit,))
-    rows = [dict(r) for r in c.fetchall()]
+    rows = _attach_category(
+        db._attach_score_components([dict(r) for r in c.fetchall()])
+    )
     conn.close()
     return JSONResponse(rows)
 
@@ -58,7 +79,7 @@ def get_markets():
     c = conn.cursor()
     c.execute("""
         SELECT
-            ticker, series_ticker, title, risk_group,
+            ticker, series_ticker, title, category, risk_group,
             mnpi_actors, clearance_tier, actors_json,
             volume_fp, last_price_dollars,
             close_time, last_seen
@@ -162,7 +183,9 @@ def get_clusters(min_count: int = 2, limit: int = 50, active_days: int = 30):
     A cluster is 2+ anomaly events on the same market within a 72-hour window.
     Higher cluster_score = more suspicious pattern.
     """
-    rows = db.get_clusters(min_count=min_count, limit=limit, active_days=active_days)
+    rows = _attach_category(
+        db.get_clusters(min_count=min_count, limit=limit, active_days=active_days)
+    )
     return JSONResponse(rows)
 
 
@@ -270,3 +293,43 @@ def get_whale_flow(ticker: str, limit: int = 100):
     """Return hourly whale trade rollups for charting."""
     rows = db.get_whale_flow(ticker, limit=limit)
     return JSONResponse(rows)
+
+
+@app.get("/api/settings")
+def get_settings():
+    """Return operator-tunable settings and read-only code constants."""
+    return JSONResponse(config.get_public_settings())
+
+
+@app.put("/api/settings")
+def update_settings(patch: dict = Body(...)):
+    """Update allowlisted config.json settings with validation."""
+    errors = config.validate_settings_patch(patch)
+    if errors:
+        return JSONResponse({"status": "error", "errors": errors}, status_code=400)
+
+    merged = config.merge_settings_patch(config.load_config(), patch)
+    config.save_config(merged)
+    restart_required = []
+    if "scheduler_interval_minutes" in patch:
+        restart_required.append("scheduler")
+
+    return JSONResponse({
+        "status": "ok",
+        "settings": config.get_public_settings(merged),
+        "restart_required": restart_required,
+    })
+
+
+@app.post("/api/settings/refresh-calendar")
+def refresh_settings_calendar(dry_run: bool = False):
+    """Refresh FOMC/CPI dates from official sources into config.json."""
+    result = event_calendar_refresh.refresh_event_calendar(dry_run=dry_run)
+    return JSONResponse({
+        "status": result.status,
+        "updated": result.updated,
+        "dry_run": result.dry_run,
+        "sources": [asdict(source) for source in result.sources],
+        "errors": result.errors,
+        "settings": config.get_public_settings(),
+    })

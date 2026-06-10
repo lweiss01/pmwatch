@@ -203,6 +203,7 @@ def init_db():
 
     _ensure_watched_markets_columns(conn)
     _ensure_anomaly_columns(conn)
+    _ensure_correlation_columns(conn)
 
     conn.execute("PRAGMA journal_mode=WAL")
     conn.commit()
@@ -229,6 +230,29 @@ def _ensure_anomaly_columns(conn: sqlite3.Connection) -> None:
     existing = {row[1] for row in conn.execute("PRAGMA table_info(anomalies)")}
     if "subject_name" not in existing:
         conn.execute("ALTER TABLE anomalies ADD COLUMN subject_name TEXT")
+    if "score_components_json" not in existing:
+        conn.execute("ALTER TABLE anomalies ADD COLUMN score_components_json TEXT")
+
+
+def _attach_score_components(rows: list) -> list:
+    import json as _json
+
+    for row in rows:
+        raw = row.get("score_components_json")
+        if raw:
+            try:
+                row["score_components"] = _json.loads(raw)
+            except (_json.JSONDecodeError, TypeError):
+                row["score_components"] = None
+        else:
+            row["score_components"] = None
+    return rows
+
+
+def _ensure_correlation_columns(conn: sqlite3.Connection) -> None:
+    existing = {row[1] for row in conn.execute("PRAGMA table_info(news_correlations)")}
+    if "explanation_json" not in existing:
+        conn.execute("ALTER TABLE news_correlations ADD COLUMN explanation_json TEXT")
 
 
 def upsert_market(market: dict, conn: sqlite3.Connection | None = None):
@@ -323,8 +347,13 @@ def insert_candlesticks(candles: list, conn: sqlite3.Connection | None = None) -
 
 
 def insert_anomaly(anomaly: dict):
+    import json as _json
+
     conn = get_conn()
     c = conn.cursor()
+    score_components_json = anomaly.get("score_components_json")
+    if score_components_json is None and anomaly.get("score_components") is not None:
+        score_components_json = _json.dumps(anomaly["score_components"])
     c.execute("""
         INSERT INTO anomalies
             (ticker, market_title, series_ticker, risk_group, mnpi_actors,
@@ -332,16 +361,17 @@ def insert_anomaly(anomaly: dict):
              detected_ts, detected_time, anomaly_score, volume_zscore,
              block_trade_ratio, directional_flag, trigger_type,
              price_before, price_current, volume_in_window,
-             correlated_event, notes)
+             correlated_event, notes, score_components_json)
         VALUES
             (:ticker, :market_title, :series_ticker, :risk_group, :mnpi_actors,
              :subject_name,
              :detected_ts, :detected_time, :anomaly_score, :volume_zscore,
              :block_trade_ratio, :directional_flag, :trigger_type,
              :price_before, :price_current, :volume_in_window,
-             :correlated_event, :notes)
+             :correlated_event, :notes, :score_components_json)
     """, {
         "subject_name": anomaly.get("subject_name"),
+        "score_components_json": score_components_json,
         **anomaly,
     })
     conn.commit()
@@ -608,7 +638,8 @@ def get_cluster_events(ticker: str, first_seen_ts: int) -> list:
             id, ticker, market_title, series_ticker, risk_group, mnpi_actors,
             detected_ts, detected_time, anomaly_score, volume_zscore,
             block_trade_ratio, directional_flag, trigger_type,
-            price_before, price_current, volume_in_window, notes
+            price_before, price_current, volume_in_window, notes,
+            score_components_json
         FROM anomalies
         WHERE ticker = ?
           AND detected_ts >= ?
@@ -616,7 +647,7 @@ def get_cluster_events(ticker: str, first_seen_ts: int) -> list:
         ORDER BY detected_ts ASC
     """, (ticker, first_ts, last_ts))
     
-    rows = [dict(r) for r in c.fetchall()]
+    rows = _attach_score_components([dict(r) for r in c.fetchall()])
     conn.close()
     return rows
 
@@ -790,15 +821,28 @@ def insert_correlation(correlation: dict):
     c = conn.cursor()
     c.execute("""
         INSERT OR IGNORE INTO news_correlations
-            (anomaly_id, cluster_first_seen_ts, ticker, news_id, lead_time_seconds, confidence_score, notes)
+            (anomaly_id, cluster_first_seen_ts, ticker, news_id, lead_time_seconds,
+             confidence_score, notes, explanation_json)
         VALUES
-            (:anomaly_id, :cluster_first_seen_ts, :ticker, :news_id, :lead_time_seconds, :confidence_score, :notes)
-    """, correlation)
+            (:anomaly_id, :cluster_first_seen_ts, :ticker, :news_id, :lead_time_seconds,
+             :confidence_score, :notes, :explanation_json)
+    """, {
+        "anomaly_id": correlation["anomaly_id"],
+        "cluster_first_seen_ts": correlation["cluster_first_seen_ts"],
+        "ticker": correlation["ticker"],
+        "news_id": correlation["news_id"],
+        "lead_time_seconds": correlation["lead_time_seconds"],
+        "confidence_score": correlation["confidence_score"],
+        "notes": correlation["notes"],
+        "explanation_json": correlation.get("explanation_json"),
+    })
     conn.commit()
     conn.close()
 
 
 def get_correlations(limit: int = 50) -> list:
+    import json as _json
+
     conn = get_conn()
     c = conn.cursor()
     c.execute("""
@@ -820,6 +864,15 @@ def get_correlations(limit: int = 50) -> list:
     """, (limit,))
     rows = [dict(r) for r in c.fetchall()]
     conn.close()
+    for row in rows:
+        raw = row.get("explanation_json")
+        if raw:
+            try:
+                row["explanation"] = _json.loads(raw)
+            except (_json.JSONDecodeError, TypeError):
+                row["explanation"] = None
+        else:
+            row["explanation"] = None
     return rows
 
 
