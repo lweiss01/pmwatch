@@ -17,3 +17,7 @@ __pycache__/
 
 # Antigravity Session State
 .antigravity_session/
+
+# Local artifacts
+.repo-report/
+smoke_inner.kml
