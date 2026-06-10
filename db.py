@@ -3,12 +3,23 @@ import os
 import time
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "data", "pmwatch.db")
+BUSY_TIMEOUT_MS = 30_000
 
 
-def get_conn():
-    conn = sqlite3.connect(DB_PATH)
+def get_conn(timeout: float = 30.0) -> sqlite3.Connection:
+    """Open SQLite connection, creating data/ if needed."""
+    db_dir = os.path.dirname(DB_PATH)
+    if db_dir:
+        os.makedirs(db_dir, exist_ok=True)
+    conn = sqlite3.connect(DB_PATH, timeout=timeout)
     conn.row_factory = sqlite3.Row
+    conn.execute(f"PRAGMA busy_timeout = {BUSY_TIMEOUT_MS}")
     return conn
+
+
+def _close_conn(conn: sqlite3.Connection | None, own_conn: bool) -> None:
+    if own_conn and conn is not None:
+        conn.close()
 
 
 def init_db():
@@ -193,6 +204,7 @@ def init_db():
     _ensure_watched_markets_columns(conn)
     _ensure_anomaly_columns(conn)
 
+    conn.execute("PRAGMA journal_mode=WAL")
     conn.commit()
     conn.close()
     print(f"Database initialized at {DB_PATH}")
@@ -219,8 +231,10 @@ def _ensure_anomaly_columns(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE anomalies ADD COLUMN subject_name TEXT")
 
 
-def upsert_market(market: dict):
-    conn = get_conn()
+def upsert_market(market: dict, conn: sqlite3.Connection | None = None):
+    own_conn = conn is None
+    if own_conn:
+        conn = get_conn()
     c = conn.cursor()
     c.execute("""
         INSERT INTO watched_markets
@@ -249,14 +263,17 @@ def upsert_market(market: dict):
         "rules_primary": market.get("rules_primary"),
         **market,
     })
-    conn.commit()
-    conn.close()
+    if own_conn:
+        conn.commit()
+    _close_conn(conn, own_conn)
 
 
-def insert_trades(trades: list):
+def insert_trades(trades: list, conn: sqlite3.Connection | None = None) -> int:
     if not trades:
         return 0
-    conn = get_conn()
+    own_conn = conn is None
+    if own_conn:
+        conn = get_conn()
     c = conn.cursor()
     inserted = 0
     for t in trades:
@@ -272,15 +289,18 @@ def insert_trades(trades: list):
             inserted += c.rowcount
         except sqlite3.Error:
             pass
-    conn.commit()
-    conn.close()
+    if own_conn:
+        conn.commit()
+    _close_conn(conn, own_conn)
     return inserted
 
 
-def insert_candlesticks(candles: list):
+def insert_candlesticks(candles: list, conn: sqlite3.Connection | None = None) -> int:
     if not candles:
         return 0
-    conn = get_conn()
+    own_conn = conn is None
+    if own_conn:
+        conn = get_conn()
     c = conn.cursor()
     inserted = 0
     for candle in candles:
@@ -296,8 +316,9 @@ def insert_candlesticks(candles: list):
             inserted += c.rowcount
         except sqlite3.Error:
             pass
-    conn.commit()
-    conn.close()
+    if own_conn:
+        conn.commit()
+    _close_conn(conn, own_conn)
     return inserted
 
 
@@ -355,8 +376,10 @@ def get_candles(ticker: str, limit_minutes: int = 4320) -> list:
     return rows
 
 
-def log_collection_run(run: dict):
-    conn = get_conn()
+def log_collection_run(run: dict, conn: sqlite3.Connection | None = None):
+    own_conn = conn is None
+    if own_conn:
+        conn = get_conn()
     c = conn.cursor()
     c.execute("""
         INSERT INTO collection_log
@@ -364,8 +387,9 @@ def log_collection_run(run: dict):
         VALUES
             (:run_time, :markets_checked, :trades_collected, :anomalies_flagged, :errors)
     """, run)
-    conn.commit()
-    conn.close()
+    if own_conn:
+        conn.commit()
+    _close_conn(conn, own_conn)
 
 
 def upsert_cluster(cluster: dict):
@@ -660,8 +684,10 @@ def get_microstructure_alerts(limit: int = 50) -> list:
     return rows
 
 
-def insert_whale_stats(stats: dict):
-    conn = get_conn()
+def insert_whale_stats(stats: dict, conn: sqlite3.Connection | None = None):
+    own_conn = conn is None
+    if own_conn:
+        conn = get_conn()
     c = conn.cursor()
     c.execute("""
         INSERT OR REPLACE INTO whale_hourly_stats
@@ -669,8 +695,9 @@ def insert_whale_stats(stats: dict):
         VALUES
             (:ticker, :hour_ts, :whale_yes_volume, :whale_no_volume, :net_whale_exposure, :block_trade_count)
     """, stats)
-    conn.commit()
-    conn.close()
+    if own_conn:
+        conn.commit()
+    _close_conn(conn, own_conn)
 
 
 def get_whale_flow(ticker: str, limit: int = 100) -> list:

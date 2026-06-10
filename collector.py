@@ -12,15 +12,23 @@ BASE_URL = "https://api.elections.kalshi.com/trade-api/v2"
 LOG_PATH = Path(__file__).parent / "logs" / "collector.log"
 RATE_LIMIT_DELAY = 0.4  # seconds between requests
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-    handlers=[
-        logging.FileHandler(LOG_PATH),
-        logging.StreamHandler()
-    ]
-)
 log = logging.getLogger(__name__)
+
+
+def _configure_logging() -> None:
+    """Configure collector logging when run as a standalone script."""
+    LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    handlers: list[logging.Handler] = [logging.StreamHandler()]
+    try:
+        handlers.append(logging.FileHandler(LOG_PATH, encoding="utf-8", delay=True))
+    except OSError as exc:
+        print(f"Warning: could not open {LOG_PATH} ({exc}); logging to console only.")
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(message)s",
+        handlers=handlers,
+        force=True,
+    )
 
 
 # --- API Helpers ---
@@ -98,69 +106,72 @@ def fetch_recent_trades(ticker: str, max_pages: int = 10) -> list:
     return trades
 
 # --- Whale Stats Rollup ---
-def rollup_whale_stats_for_market(ticker: str):
+def rollup_whale_stats_for_market(ticker: str, conn=None):
     """Calculate whale trade statistics and save hourly rollups to the database."""
-    conn = db.get_conn()
-    c = conn.cursor()
-    
-    # 1. Fetch all trades to calculate 99th percentile
-    c.execute("SELECT count_fp FROM trades WHERE ticker = ? ORDER BY count_fp ASC", (ticker,))
-    rows = c.fetchall()
-    if not rows:
-        conn.close()
-        return
-        
-    sizes = [r[0] for r in rows]
-    idx = int(len(sizes) * 0.99)
-    # Threshold is 99th percentile, with a floor of 1000 contracts
-    threshold = max(1000.0, sizes[idx])
-    
-    # 2. Fetch trades in the last 7 days to roll up hourly stats
-    cutoff_ts = int(time.time()) - (7 * 86400)
-    c.execute("""
-        SELECT created_ts, count_fp, taker_side, is_block_trade 
-        FROM trades 
-        WHERE ticker = ? AND created_ts >= ?
-    """, (ticker, cutoff_ts))
-    recent_trades = c.fetchall()
-    conn.close()
-    
-    if not recent_trades:
-        return
-        
-    # Group by hour timestamp
-    hourly_groups = {}
-    for created_ts, count_fp, taker_side, is_block_trade in recent_trades:
-        hour_ts = (created_ts // 3600) * 3600
-        if hour_ts not in hourly_groups:
-            hourly_groups[hour_ts] = []
-        hourly_groups[hour_ts].append((count_fp, taker_side, is_block_trade))
-        
-    # Aggregate and insert
-    for hour_ts, trades_in_hour in hourly_groups.items():
-        yes_vol = 0.0
-        no_vol = 0.0
-        blocks = 0
-        
-        for count_fp, taker_side, is_block_trade in trades_in_hour:
-            is_whale = (count_fp >= threshold) or (is_block_trade == 1)
-            if is_block_trade == 1:
-                blocks += 1
-            if is_whale:
-                if taker_side == "yes":
-                    yes_vol += count_fp
-                elif taker_side == "no":
-                    no_vol += count_fp
-                    
-        stats = {
-            "ticker": ticker,
-            "hour_ts": hour_ts,
-            "whale_yes_volume": yes_vol,
-            "whale_no_volume": no_vol,
-            "net_whale_exposure": yes_vol - no_vol,
-            "block_trade_count": blocks
-        }
-        db.insert_whale_stats(stats)
+    own_conn = conn is None
+    if own_conn:
+        conn = db.get_conn()
+    try:
+        c = conn.cursor()
+
+        c.execute(
+            "SELECT count_fp FROM trades WHERE ticker = ? ORDER BY count_fp ASC",
+            (ticker,),
+        )
+        rows = c.fetchall()
+        if not rows:
+            return
+
+        sizes = [r[0] for r in rows]
+        idx = int(len(sizes) * 0.99)
+        threshold = max(1000.0, sizes[idx])
+
+        cutoff_ts = int(time.time()) - (7 * 86400)
+        c.execute("""
+            SELECT created_ts, count_fp, taker_side, is_block_trade
+            FROM trades
+            WHERE ticker = ? AND created_ts >= ?
+        """, (ticker, cutoff_ts))
+        recent_trades = c.fetchall()
+        if not recent_trades:
+            return
+
+        hourly_groups = {}
+        for created_ts, count_fp, taker_side, is_block_trade in recent_trades:
+            hour_ts = (created_ts // 3600) * 3600
+            hourly_groups.setdefault(hour_ts, []).append(
+                (count_fp, taker_side, is_block_trade)
+            )
+
+        for hour_ts, trades_in_hour in hourly_groups.items():
+            yes_vol = 0.0
+            no_vol = 0.0
+            blocks = 0
+
+            for count_fp, taker_side, is_block_trade in trades_in_hour:
+                is_whale = (count_fp >= threshold) or (is_block_trade == 1)
+                if is_block_trade == 1:
+                    blocks += 1
+                if is_whale:
+                    if taker_side == "yes":
+                        yes_vol += count_fp
+                    elif taker_side == "no":
+                        no_vol += count_fp
+
+            db.insert_whale_stats({
+                "ticker": ticker,
+                "hour_ts": hour_ts,
+                "whale_yes_volume": yes_vol,
+                "whale_no_volume": no_vol,
+                "net_whale_exposure": yes_vol - no_vol,
+                "block_trade_count": blocks,
+            }, conn=conn)
+
+        if own_conn:
+            conn.commit()
+    finally:
+        if own_conn:
+            conn.close()
 
 
 # --- Candlestick Fetcher ---
@@ -218,6 +229,8 @@ def run_collection(fast: bool = False):
     run_start = config.utc_now_iso()
     log.info(f"=== Collection run started (fast={fast}): {run_start} ===")
 
+    db.init_db()
+    conn = db.get_conn()
     watchlist = load_watchlist()
     total_markets = 0
     total_trades = 0
@@ -225,11 +238,9 @@ def run_collection(fast: bool = False):
 
     if fast:
         # Fast mode: Get already known open/active markets from DB to avoid fetching watchlist series
-        conn = db.get_conn()
         c = conn.cursor()
         c.execute("SELECT ticker, series_ticker, category, risk_group, mnpi_actors FROM watched_markets WHERE status = 'active'")
         active_markets = [dict(row) for row in c.fetchall()]
-        conn.close()
 
         # Group cached markets by series
         active_markets_map = {}
@@ -285,11 +296,11 @@ def run_collection(fast: bool = False):
                         "last_price_dollars": float(market.get("last_price_dollars", 0)),
                         "status": market.get("status", ""),
                         "last_seen": run_start
-                    })
+                    }, conn=conn)
 
                 # Fetch and store trades (only 1 page in fast mode)
                 trades = fetch_recent_trades(ticker, max_pages=1 if fast else 10)
-                inserted = db.insert_trades(trades)
+                inserted = db.insert_trades(trades, conn=conn)
                 total_trades += inserted
                 
                 # Push trades to microstructure watcher in-memory cache
@@ -301,37 +312,45 @@ def run_collection(fast: bool = False):
 
                 # Calculate and rollup whale stats
                 try:
-                    rollup_whale_stats_for_market(ticker)
+                    rollup_whale_stats_for_market(ticker, conn=conn)
                 except Exception as ex:
                     log.error(f"Failed to rollup whale stats for {ticker}: {ex}")
 
                 # Fetch and store candlesticks (skip in fast mode)
                 if not fast:
                     candles = fetch_candlesticks(series, ticker)
-                    db.insert_candlesticks(candles)
+                    db.insert_candlesticks(candles, conn=conn)
                 else:
                     candles = []
 
+                conn.commit()
                 log.info(f"  {ticker}: {len(trades)} trades, {len(candles)} candles, {inserted} new")
                 total_markets += 1
 
         except Exception as e:
+            conn.rollback()
             msg = f"Error processing {series}: {e}"
             log.error(msg)
             errors.append(msg)
 
-    # Log the run
-    db.log_collection_run({
-        "run_time": run_start,
-        "markets_checked": total_markets,
-        "trades_collected": total_trades,
-        "anomalies_flagged": 0,
-        "errors": "; ".join(errors) if errors else None
-    })
+    try:
+        db.log_collection_run({
+            "run_time": run_start,
+            "markets_checked": total_markets,
+            "trades_collected": total_trades,
+            "anomalies_flagged": 0,
+            "errors": "; ".join(errors) if errors else None
+        }, conn=conn)
+        conn.commit()
+    finally:
+        conn.close()
 
     log.info(f"=== Run complete: {total_markets} markets, {total_trades} trades ===")
 
 
 if __name__ == "__main__":
-    db.init_db()
+    _configure_logging()
+    log.warning(
+        "If scheduler.py is also running, stop it first to avoid SQLite lock contention."
+    )
     run_collection()
