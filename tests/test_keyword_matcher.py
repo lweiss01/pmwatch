@@ -160,6 +160,78 @@ class TestKeywordMatcher(unittest.TestCase):
         self.assertGreaterEqual(result.quality, 0.25)
         self.assertLessEqual(result.quality, 1.0)
 
+    def test_stress_test_explain_reject_reason(self):
+        article = self.fixtures["fed_stress_test_false_positive"]
+        explanation = keyword_matcher.explain_for_correlation(
+            "KXFED", article["title"], article["description"]
+        )
+        self.assertEqual(explanation.decision, "reject")
+        self.assertIn(
+            explanation.reject_reason,
+            ("topic_family_blocklist", "series_blocklist"),
+        )
+        self.assertTrue(explanation.blocklist_hits or explanation.topic_family_hits)
+
+    def test_fed_supervision_topic_family_reject(self):
+        article = self.fixtures["fed_supervision_false_positive"]
+        explanation = keyword_matcher.explain_for_correlation(
+            "KXFED", article["title"], article["description"]
+        )
+        self.assertEqual(explanation.decision, "reject")
+        self.assertEqual(explanation.reject_reason, "topic_family_blocklist")
+        self.assertIn("bank examination", explanation.topic_family_hits)
+
+    def test_rate_decision_explain_accept(self):
+        article = self.fixtures["fed_rate_decision_true_positive"]
+        explanation = keyword_matcher.explain_for_correlation(
+            "KXFED", article["title"], article["description"]
+        )
+        self.assertEqual(explanation.decision, "accept")
+        self.assertGreater(explanation.quality, 0.0)
+        self.assertTrue(explanation.matched_anchors)
+        self.assertTrue(explanation.matched_signals)
+        self.assertIn("anchor_score", explanation.quality_components)
+
+    def test_candidate_scoring_returns_best_not_first_in_order(self):
+        """Higher-quality match should win even if later in SERIES_MATCH_ORDER."""
+        title = "Congress faces government shutdown deadline"
+        description = "Lawmakers remain divided as a federal shutdown funding lapse looms."
+        candidates = keyword_matcher.evaluate_all_candidates(title, description)
+        self.assertTrue(candidates)
+        self.assertEqual(candidates[0].series, "KXGOVSHUT")
+        self.assertEqual(keyword_matcher.match_series(title, description), "KXGOVSHUT")
+
+    def test_ambiguous_cluster_keeps_top_candidate(self):
+        article = self.fixtures["ambiguous_scotus_personnel"]
+        candidates = keyword_matcher.evaluate_all_candidates(
+            article["title"], article["description"]
+        )
+        best = keyword_matcher.select_best_candidate(candidates)
+        self.assertIsNotNone(best)
+        self.assertEqual(best.series, "KXSCOTUSRESIGN")
+        self.assertEqual(
+            keyword_matcher.match_series(article["title"], article["description"]),
+            "KXSCOTUSRESIGN",
+        )
+
+    def test_fed_press_scope_excludes_unrelated_at_ingest(self):
+        self.assertIsNone(
+            keyword_matcher.match_series(
+                "President discusses martial law options",
+                "White House briefing on domestic deployment.",
+                source="Federal Reserve Press",
+            )
+        )
+
+    def test_correlation_source_scope_rejects_out_of_scope_series(self):
+        explanation = keyword_matcher.evaluate_series_explain(
+            "KXINSURRECTION",
+            "federal reserve announces insurrection act review",
+            source="Federal Reserve Press",
+        )
+        self.assertEqual(explanation.decision, "reject")
+        self.assertEqual(explanation.reject_reason, "source_scope")
+
 
 if __name__ == "__main__":
     unittest.main()

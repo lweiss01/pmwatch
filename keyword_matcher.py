@@ -2,14 +2,25 @@
 Keyword matching for news-to-series correlation.
 
 Uses anchor+signal co-occurrence, phrase-guarded required terms, blocklists,
-word-boundary matching for short tokens, and negation detection.
+topic-family suppression, candidate scoring, and negation detection.
 """
 
 from __future__ import annotations
 
+import logging
 import re
-from dataclasses import dataclass, field
-from typing import Any
+from dataclasses import asdict, dataclass, field
+from typing import Any, Literal
+
+import config
+
+log = logging.getLogger(__name__)
+
+# Default floors (runtime reads config.get_* helpers).
+MIN_INGEST_QUALITY = config.DEFAULT_MATCHER_THRESHOLDS["min_ingest_quality"]
+MIN_CORRELATION_MATCH_QUALITY = config.DEFAULT_CORRELATION_THRESHOLDS["min_match_quality"]
+# When top-two candidate qualities differ by less than this, keep the best (ambiguous cluster).
+AMBIGUITY_QUALITY_GAP = 0.15
 
 # Short tokens that need word-boundary matching to avoid substring false positives.
 SHORT_BOUNDARY_TERMS = frozenset({
@@ -49,6 +60,29 @@ FEED_TOPIC_SCOPE: dict[str, list[str] | None] = {
     "Senate eFD Disclosures": [],
     "NYT Politics": None,
     "Politico Playbook": None,
+}
+
+# Topic families add defense beyond per-series blocklists (e.g. Fed supervision vs rate policy).
+SERIES_TOPIC_FAMILIES: dict[str, str] = {
+    "KXFED": "monetary_policy",
+}
+
+TOPIC_FAMILY_BLOCKLIST: dict[str, list[str]] = {
+    "monetary_policy": [
+        "stress test",
+        "bank stress",
+        "ccar",
+        "capital requirements",
+        "enforcement action",
+        "cease and desist",
+        "bank holding",
+        "merger approval",
+        "payment system",
+        "supervision",
+        "bank examination",
+        "regulation z",
+        "discount window",
+    ],
 }
 
 
@@ -316,6 +350,9 @@ class MatchResult:
     negated: bool
     quality: float
     reject_reason: str | None = None
+    blocklist_hits: list[str] = field(default_factory=list)
+    topic_family_hits: list[str] = field(default_factory=list)
+    quality_components: dict[str, float] = field(default_factory=dict)
 
     @property
     def all_matched_terms(self) -> list[str]:
@@ -325,6 +362,49 @@ class MatchResult:
             + self.matched_required
             + self.matched_context
         )
+
+
+@dataclass
+class MatchExplanation:
+    """Structured accept/reject record for matcher and correlation forensics."""
+
+    series: str
+    decision: Literal["accept", "reject"]
+    matched_anchors: list[str] = field(default_factory=list)
+    matched_signals: list[str] = field(default_factory=list)
+    matched_required: list[str] = field(default_factory=list)
+    matched_context: list[str] = field(default_factory=list)
+    blocklist_hits: list[str] = field(default_factory=list)
+    topic_family_hits: list[str] = field(default_factory=list)
+    negated_terms: list[str] = field(default_factory=list)
+    negation_checked: bool = False
+    source_scope_ok: bool | None = None
+    quality: float = 0.0
+    quality_components: dict[str, float] = field(default_factory=dict)
+    reject_reason: str | None = None
+    rationale: str = ""
+    ambiguous_runner_up: str | None = None
+    ambiguous_quality_gap: float | None = None
+
+    def to_result(self) -> MatchResult | None:
+        if self.decision != "accept":
+            return None
+        return MatchResult(
+            series=self.series,
+            matched_anchors=self.matched_anchors,
+            matched_signals=self.matched_signals,
+            matched_required=self.matched_required,
+            matched_context=self.matched_context,
+            negated=bool(self.negated_terms),
+            quality=self.quality,
+            reject_reason=None,
+            blocklist_hits=self.blocklist_hits,
+            topic_family_hits=self.topic_family_hits,
+            quality_components=dict(self.quality_components),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
 
 
 def _needs_boundary(term: str) -> bool:
@@ -379,21 +459,43 @@ def _active_matches(terms: list[str], text: str) -> list[str]:
     return matched
 
 
+def _blocklist_hits(terms: list[str], text: str) -> list[str]:
+    return [
+        term
+        for term in _sort_terms_longest_first(terms)
+        if term_in_text(term, text)
+    ]
+
+
+def _negated_terms(terms: list[str], text: str) -> list[str]:
+    negated: list[str] = []
+    for term in _sort_terms_longest_first(terms):
+        positions = find_term_positions(term, text)
+        if positions and all(is_negated(text, pos) for pos in positions):
+            negated.append(term)
+    return negated
+
+
 def _compute_quality(
     matched_anchors: list[str],
     matched_signals: list[str],
     matched_required: list[str],
     matched_context: list[str],
     rule: SeriesRule,
-) -> float:
+) -> tuple[float, dict[str, float]]:
     if rule.required and not rule.anchors and not rule.signals:
         req_score = min(1.0, len(matched_required) / max(1, len(rule.required)))
-        return round(max(0.35, req_score), 3)
+        components = {"required_score": round(req_score, 3)}
+        return round(max(0.35, req_score), 3), components
 
     if rule.require_both and rule.anchors and rule.signals:
         anchor_score = min(1.0, len(matched_anchors) / max(1, len(rule.anchors)))
         signal_score = min(1.0, len(matched_signals) / max(1, len(rule.signals)))
-        return round(0.35 * anchor_score + 0.65 * signal_score, 3)
+        components = {
+            "anchor_score": round(anchor_score, 3),
+            "signal_score": round(signal_score, 3),
+        }
+        return round(0.35 * anchor_score + 0.65 * signal_score, 3), components
 
     total_terms = rule.anchors + rule.signals + rule.required + rule.context
     matched_count = (
@@ -402,82 +504,235 @@ def _compute_quality(
         + len(matched_required)
         + len(matched_context)
     )
-    return round(max(0.25, min(1.0, matched_count / max(1, len(total_terms)))), 3)
+    coverage = matched_count / max(1, len(total_terms))
+    components = {"coverage_score": round(min(1.0, coverage), 3)}
+    return round(max(0.25, min(1.0, coverage)), 3), components
 
 
-def evaluate_series(series: str, text: str) -> MatchResult | None:
-    """Evaluate whether text matches a single series rule."""
+def _reject_explanation(
+    series: str,
+    reason: str,
+    rationale: str,
+    *,
+    blocklist_hits: list[str] | None = None,
+    topic_family_hits: list[str] | None = None,
+    source_scope_ok: bool | None = None,
+    matched_anchors: list[str] | None = None,
+    matched_signals: list[str] | None = None,
+    matched_required: list[str] | None = None,
+    matched_context: list[str] | None = None,
+    negated_terms: list[str] | None = None,
+    negation_checked: bool = False,
+    quality: float = 0.0,
+    quality_components: dict[str, float] | None = None,
+) -> MatchExplanation:
+    return MatchExplanation(
+        series=series,
+        decision="reject",
+        matched_anchors=matched_anchors or [],
+        matched_signals=matched_signals or [],
+        matched_required=matched_required or [],
+        matched_context=matched_context or [],
+        blocklist_hits=blocklist_hits or [],
+        topic_family_hits=topic_family_hits or [],
+        negated_terms=negated_terms or [],
+        negation_checked=negation_checked,
+        source_scope_ok=source_scope_ok,
+        quality=quality,
+        quality_components=quality_components or {},
+        reject_reason=reason,
+        rationale=rationale,
+    )
+
+
+def evaluate_series_explain(
+    series: str,
+    text: str,
+    source: str | None = None,
+) -> MatchExplanation:
+    """Evaluate a single series and return a structured accept/reject explanation."""
     rule = SERIES_RULES.get(series)
     if rule is None:
-        return None
+        return _reject_explanation(
+            series,
+            "unknown_series",
+            f"Series {series} has no matcher rules.",
+        )
 
     text_lower = text.lower()
+    scope_ok = series_allowed_for_source(series, source)
+    if source is not None and not scope_ok:
+        return _reject_explanation(
+            series,
+            "source_scope",
+            f"Feed source {source!r} is not scoped to series {series}.",
+            source_scope_ok=False,
+        )
 
-    for blocked in _sort_terms_longest_first(rule.blocklist):
-        if term_in_text(blocked, text_lower):
-            return None
+    topic_family = SERIES_TOPIC_FAMILIES.get(series)
+    family_hits: list[str] = []
+    if topic_family:
+        family_hits = _blocklist_hits(
+            TOPIC_FAMILY_BLOCKLIST.get(topic_family, []),
+            text_lower,
+        )
+        if family_hits:
+            return _reject_explanation(
+                series,
+                "topic_family_blocklist",
+                (
+                    f"Topic family {topic_family!r} blocklist hit: "
+                    f"{', '.join(family_hits[:3])}."
+                ),
+                topic_family_hits=family_hits,
+                source_scope_ok=scope_ok,
+            )
+
+    block_hits = _blocklist_hits(rule.blocklist, text_lower)
+    if block_hits:
+        return _reject_explanation(
+            series,
+            "series_blocklist",
+            f"Series blocklist hit: {', '.join(block_hits[:3])}.",
+            blocklist_hits=block_hits,
+            topic_family_hits=family_hits,
+            source_scope_ok=scope_ok,
+        )
 
     matched_anchors = _active_matches(rule.anchors, text_lower)
     matched_signals = _active_matches(rule.signals, text_lower)
     matched_required = _active_matches(rule.required, text_lower)
     matched_context = _active_matches(rule.context, text_lower)
 
-    negated_only = (
-        not matched_anchors
-        and not matched_signals
-        and not matched_required
-        and not matched_context
-    )
+    all_terms = rule.anchors + rule.signals + rule.required + rule.context
+    negated = _negated_terms(all_terms, text_lower)
+    negation_checked = bool(all_terms)
 
-    # Required-only rules (phrase-guarded).
     if rule.required and not rule.anchors and not rule.signals:
         if not matched_required:
-            return None
-        quality = _compute_quality(
+            return _reject_explanation(
+                series,
+                "missing_required_phrase",
+                "Required phrase not found.",
+                source_scope_ok=scope_ok,
+                negated_terms=negated,
+                negation_checked=negation_checked,
+            )
+        quality, components = _compute_quality(
             matched_anchors, matched_signals, matched_required, matched_context, rule
         )
-        return MatchResult(
+        return MatchExplanation(
             series=series,
+            decision="accept",
             matched_anchors=matched_anchors,
             matched_signals=matched_signals,
             matched_required=matched_required,
             matched_context=matched_context,
-            negated=negated_only,
+            blocklist_hits=block_hits,
+            topic_family_hits=family_hits,
+            negated_terms=negated,
+            negation_checked=negation_checked,
+            source_scope_ok=scope_ok,
             quality=quality,
+            quality_components=components,
+            rationale=f"Matched required phrases ({', '.join(matched_required)}).",
         )
 
-    # Anchor + context co-occurrence (required + context variant).
     if rule.required and rule.context and rule.require_both:
         if not matched_required or not matched_context:
-            return None
+            return _reject_explanation(
+                series,
+                "missing_required_context_pair",
+                "Required phrase and context must co-occur.",
+                source_scope_ok=scope_ok,
+                matched_anchors=matched_anchors,
+                matched_signals=matched_signals,
+                matched_required=matched_required,
+                matched_context=matched_context,
+                negated_terms=negated,
+                negation_checked=negation_checked,
+            )
     elif rule.require_both and rule.anchors and rule.signals:
-        if not matched_anchors or len(matched_signals) < rule.min_signal_hits:
-            return None
+        if not matched_anchors:
+            return _reject_explanation(
+                series,
+                "missing_anchor",
+                "Anchor term required but not found.",
+                source_scope_ok=scope_ok,
+                matched_signals=matched_signals,
+                negated_terms=negated,
+                negation_checked=negation_checked,
+            )
+        if len(matched_signals) < rule.min_signal_hits:
+            return _reject_explanation(
+                series,
+                "missing_signal",
+                (
+                    f"Need {rule.min_signal_hits} signal term(s); "
+                    f"found {len(matched_signals)}."
+                ),
+                source_scope_ok=scope_ok,
+                matched_anchors=matched_anchors,
+                matched_signals=matched_signals,
+                negated_terms=negated,
+                negation_checked=negation_checked,
+            )
     elif rule.require_both and rule.anchors and rule.context:
         if not matched_anchors or not matched_context:
-            return None
+            return _reject_explanation(
+                series,
+                "missing_anchor_context_pair",
+                "Anchor and context must co-occur.",
+                source_scope_ok=scope_ok,
+                matched_anchors=matched_anchors,
+                matched_context=matched_context,
+                negated_terms=negated,
+                negation_checked=negation_checked,
+            )
     else:
         any_match = (
             matched_anchors or matched_signals or matched_required or matched_context
         )
         if not any_match:
-            return None
+            return _reject_explanation(
+                series,
+                "no_terms_matched",
+                "No rule terms matched.",
+                source_scope_ok=scope_ok,
+                negated_terms=negated,
+                negation_checked=negation_checked,
+            )
 
-    quality = _compute_quality(
+    quality, components = _compute_quality(
         matched_anchors, matched_signals, matched_required, matched_context, rule
     )
-    return MatchResult(
+    matched_terms = (
+        matched_anchors + matched_signals + matched_required + matched_context
+    )
+    return MatchExplanation(
         series=series,
+        decision="accept",
         matched_anchors=matched_anchors,
         matched_signals=matched_signals,
         matched_required=matched_required,
         matched_context=matched_context,
-        negated=False,
+        blocklist_hits=block_hits,
+        topic_family_hits=family_hits,
+        negated_terms=negated,
+        negation_checked=negation_checked,
+        source_scope_ok=scope_ok,
         quality=quality,
+        quality_components=components,
+        rationale=f"Matched terms: {', '.join(matched_terms[:6])}.",
     )
 
 
-def _series_allowed_for_source(series: str, source: str | None) -> bool:
+def evaluate_series(series: str, text: str) -> MatchResult | None:
+    """Evaluate whether text matches a single series rule."""
+    return evaluate_series_explain(series, text).to_result()
+
+
+def series_allowed_for_source(series: str, source: str | None) -> bool:
     if source is None:
         return True
     allowed = FEED_TOPIC_SCOPE.get(source)
@@ -486,22 +741,92 @@ def _series_allowed_for_source(series: str, source: str | None) -> bool:
     return series in allowed
 
 
-def match_series(title: str, description: str, source: str | None = None) -> str | None:
-    """Return the first matching series ticker for article content."""
+def evaluate_all_candidates(
+    title: str,
+    description: str,
+    source: str | None = None,
+) -> list[MatchExplanation]:
+    """Return accept explanations for all series that pass rules and quality floor."""
     text = (title + " " + (description or "")).lower()
+    candidates: list[MatchExplanation] = []
     for series in SERIES_MATCH_ORDER:
-        if not _series_allowed_for_source(series, source):
-            continue
-        if evaluate_series(series, text) is not None:
-            return series
-    return None
+        explanation = evaluate_series_explain(series, text, source=source)
+        if (
+            explanation.decision == "accept"
+            and explanation.quality >= config.get_min_ingest_quality()
+        ):
+            candidates.append(explanation)
+    candidates.sort(
+        key=lambda c: (-c.quality, SERIES_MATCH_ORDER.index(c.series)),
+    )
+    return candidates
+
+
+def select_best_candidate(
+    candidates: list[MatchExplanation],
+) -> MatchExplanation | None:
+    """Pick the best candidate; when qualities cluster, keep the top match."""
+    if not candidates:
+        return None
+    best = candidates[0]
+    if len(candidates) >= 2:
+        gap = best.quality - candidates[1].quality
+        if gap < AMBIGUITY_QUALITY_GAP:
+            best.ambiguous_runner_up = candidates[1].series
+            best.ambiguous_quality_gap = round(gap, 3)
+            log.debug(
+                "Ambiguous ingest match: top=%s (%.3f) runner_up=%s (%.3f) gap=%.3f — keeping top",
+                best.series,
+                best.quality,
+                candidates[1].series,
+                candidates[1].quality,
+                gap,
+            )
+    return best
+
+
+def match_series(title: str, description: str, source: str | None = None) -> str | None:
+    """Return the best matching series ticker for article content."""
+    candidates = evaluate_all_candidates(title, description, source=source)
+    best = select_best_candidate(candidates)
+    return best.series if best else None
 
 
 def match_for_correlation(
     series_ticker: str,
     title: str,
     description: str,
+    source: str | None = None,
 ) -> MatchResult | None:
     """Evaluate whether an article matches a specific anomaly series."""
     text = (title + " " + (description or "")).lower()
-    return evaluate_series(series_ticker, text)
+    explanation = evaluate_series_explain(series_ticker, text, source=source)
+    if explanation.decision != "accept":
+        log.debug(
+            "Correlation match rejected for %s: %s — %s",
+            series_ticker,
+            explanation.reject_reason,
+            explanation.rationale,
+        )
+        return None
+    min_match_quality = config.get_min_correlation_match_quality()
+    if explanation.quality < min_match_quality:
+        log.debug(
+            "Correlation match below quality floor for %s: %.3f < %.3f",
+            series_ticker,
+            explanation.quality,
+            min_match_quality,
+        )
+        return None
+    return explanation.to_result()
+
+
+def explain_for_correlation(
+    series_ticker: str,
+    title: str,
+    description: str,
+    source: str | None = None,
+) -> MatchExplanation:
+    """Structured matcher evaluation for correlation forensics."""
+    text = (title + " " + (description or "")).lower()
+    return evaluate_series_explain(series_ticker, text, source=source)

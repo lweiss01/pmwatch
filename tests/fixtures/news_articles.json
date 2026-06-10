@@ -43,5 +43,17 @@
     "title": "Cabinet secretary announces resignation",
     "description": "A senior department head will leave office at the end of the month.",
     "expected_series": "KXCABOUT"
+  },
+  "fed_supervision_false_positive": {
+    "title": "Federal Reserve announces bank examination findings",
+    "description": "The Federal Reserve Board released supervision results following a bank examination of major lenders.",
+    "expected_series": null,
+    "reject_for_correlation": "KXFED"
+  },
+  "ambiguous_scotus_personnel": {
+    "title": "Supreme Court justice discusses possible retirement timeline",
+    "description": "A Supreme Court justice spoke about stepping down while the high court also weighs a nominee shortlist.",
+    "expected_series": "KXSCOTUSRESIGN",
+    "note": "May weakly match KXSCOURT; ingest should keep top SCOTUS resignation candidate."
   }
 }

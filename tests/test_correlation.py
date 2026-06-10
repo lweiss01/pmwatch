@@ -3,6 +3,7 @@ import os
 import sys
 import time
 import unittest
+from datetime import datetime, timezone
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -388,6 +389,277 @@ class TestCorrelationTemporalModel(unittest.TestCase):
 
         correlation_engine.rebuild_correlations(lookback_days=7, cap_scores=False)
         self.assertEqual(len(db.get_correlations(limit=10)), 0)
+
+    def test_evaluate_correlation_pair_rejects_stress_test_with_explanation(self):
+        article = self.fixtures["fed_stress_test_false_positive"]
+        anomaly = self._base_anomaly()
+        explanation = correlation_engine.evaluate_correlation_pair(
+            anomaly,
+            {
+                "id": 1,
+                "title": article["title"],
+                "description": article["description"],
+                "source": "Federal Reserve Press",
+                "source_type": "primary_gov",
+                "published_ts": anomaly["detected_ts"] + 3600,
+            },
+            subject_terms=None,
+            series_ticker="KXFED",
+        )
+        self.assertEqual(explanation.decision, "reject")
+        self.assertIn(
+            explanation.reject_reason,
+            ("topic_family_blocklist", "series_blocklist"),
+        )
+        self.assertIn("reject", explanation.match.get("decision", "reject"))
+
+    def test_evaluate_correlation_pair_accepts_rate_decision(self):
+        article = self.fixtures["fed_rate_decision_true_positive"]
+        anomaly = self._base_anomaly(anomaly_score=55.0)
+        explanation = correlation_engine.evaluate_correlation_pair(
+            anomaly,
+            {
+                "id": 2,
+                "title": article["title"],
+                "description": article["description"],
+                "source": "Federal Reserve Press",
+                "source_type": "primary_gov",
+                "published_ts": anomaly["detected_ts"] + 3600,
+            },
+            subject_terms=None,
+            series_ticker="KXFED",
+        )
+        self.assertEqual(explanation.decision, "accept")
+        self.assertEqual(explanation.temporal_direction, "pre_news")
+        self.assertGreater(explanation.confidence_score, 0)
+        self.assertIn("match_quality", explanation.confidence_components)
+
+    def test_correlation_source_scope_rejects_wrong_feed(self):
+        article = self.fixtures["fed_rate_decision_true_positive"]
+        anomaly = self._base_anomaly()
+        explanation = correlation_engine.evaluate_correlation_pair(
+            anomaly,
+            {
+                "id": 3,
+                "title": article["title"],
+                "description": article["description"],
+                "source": "TreasuryDirect Offerings",
+                "source_type": "primary_gov",
+                "published_ts": anomaly["detected_ts"] + 3600,
+            },
+            subject_terms=None,
+            series_ticker="KXFED",
+        )
+        self.assertEqual(explanation.decision, "reject")
+        self.assertEqual(explanation.reject_reason, "source_scope")
+
+    def test_ambiguous_article_cluster_keeps_top_correlation(self):
+        detected_ts = int(time.time()) - 3600
+        published_ts = detected_ts + 3600
+
+        db.insert_anomaly({
+            "ticker": "KXFED-26DEC-T4.5",
+            "market_title": "Fed funds market",
+            "series_ticker": "KXFED",
+            "risk_group": "FOMC",
+            "mnpi_actors": "Fed governors",
+            "detected_ts": detected_ts,
+            "detected_time": "2026-06-09T12:00:00Z",
+            "anomaly_score": 80.0,
+            "volume_zscore": 10.0,
+            "block_trade_ratio": 0.5,
+            "directional_flag": 0.3,
+            "trigger_type": "compound",
+            "price_before": 0.45,
+            "price_current": 0.52,
+            "volume_in_window": 1200,
+            "correlated_event": None,
+            "notes": "test",
+        })
+        strong = self.fixtures["fed_rate_decision_true_positive"]
+        weak = {
+            "title": "Federal Reserve Board policy update",
+            "description": "The Federal Reserve noted ongoing monetary policy work.",
+        }
+        db.insert_news_articles([
+            {
+                "title": weak["title"],
+                "description": weak["description"],
+                "url": "https://example.gov/fed-weak",
+                "published_time": "2026-06-09T13:00:00Z",
+                "published_ts": published_ts,
+                "source": "Federal Reserve Press",
+                "source_type": "primary_gov",
+                "series_ticker": None,
+                "ingested_ts": int(time.time()),
+            },
+            {
+                "title": strong["title"],
+                "description": strong["description"],
+                "url": "https://example.gov/fed-strong",
+                "published_time": "2026-06-09T13:05:00Z",
+                "published_ts": published_ts + 300,
+                "source": "Federal Reserve Press",
+                "source_type": "primary_gov",
+                "series_ticker": "KXFED",
+                "ingested_ts": int(time.time()),
+            },
+        ])
+
+        correlation_engine.correlate_all_recent_anomalies(lookback_days=7)
+        rows = db.get_correlations(limit=10)
+        self.assertEqual(len(rows), 1)
+        self.assertIn("fed-strong", rows[0]["news_url"])
+        self.assertIsNotNone(rows[0].get("explanation"))
+        self.assertEqual(rows[0]["explanation"]["decision"], "accept")
+
+    def test_fed_supervision_integration_no_correlation(self):
+        article = self.fixtures["fed_supervision_false_positive"]
+        detected_ts = int(time.time()) - (10 * 3600)
+        published_ts = detected_ts + (10 * 3600)
+
+        db.insert_anomaly({
+            "ticker": "KXFED-26JUN-T3.50",
+            "market_title": "Fed funds upper bound market",
+            "series_ticker": "KXFED",
+            "risk_group": "FOMC",
+            "mnpi_actors": "Fed governors",
+            "detected_ts": detected_ts,
+            "detected_time": "2026-06-09T00:42:00Z",
+            "anomaly_score": 70.0,
+            "volume_zscore": 12.0,
+            "block_trade_ratio": 0.4,
+            "directional_flag": 0.2,
+            "trigger_type": "compound",
+            "price_before": 0.45,
+            "price_current": 0.50,
+            "volume_in_window": 900,
+            "correlated_event": None,
+            "notes": "test",
+        })
+        db.insert_news_articles([{
+            "title": article["title"],
+            "description": article["description"],
+            "url": "https://example.gov/fed-supervision",
+            "published_time": "2026-06-09T10:42:00Z",
+            "published_ts": published_ts,
+            "source": "Federal Reserve Press",
+            "source_type": "primary_gov",
+            "series_ticker": None,
+            "ingested_ts": int(time.time()),
+        }])
+
+        correlation_engine.correlate_all_recent_anomalies(lookback_days=7)
+        self.assertEqual(len(db.get_correlations(limit=10)), 0)
+
+    def test_confidence_breakdown_includes_sub_scores(self):
+        anomaly = self._base_anomaly(anomaly_score=60.0)
+        article = self._base_article(source_type="primary_gov")
+        confidence, components, sub_scores, score_type, event = (
+            correlation_engine._confidence_breakdown(
+                anomaly,
+                article,
+                time_diff=3600,
+                match_quality=0.5,
+                series_ticker="KXFED",
+            )
+        )
+        self.assertGreater(confidence, 0)
+        self.assertEqual(score_type, "leakage")
+        self.assertIn("market_microstructure_score", sub_scores)
+        self.assertIn("correlation_relevance_score", sub_scores)
+        self.assertIn("source_credibility_score", sub_scores)
+        self.assertIn("leakage_plausibility_score", sub_scores)
+        self.assertEqual(components["score_type"], "leakage")
+        self.assertIsNone(event)
+
+    def test_reaction_score_type_uses_0_7_temporal(self):
+        anomaly = self._base_anomaly()
+        article = self._base_article()
+        _, components, sub_scores, score_type, _ = correlation_engine._confidence_breakdown(
+            anomaly,
+            article,
+            time_diff=-3600,
+            match_quality=0.5,
+            series_ticker="KXFED",
+        )
+        self.assertEqual(score_type, "reaction")
+        self.assertEqual(components["temporal_multiplier"], 0.7)
+        self.assertEqual(sub_scores["leakage_plausibility_score"], 0.7)
+
+    def test_expected_event_boosts_long_lead_fomc_window(self):
+        detected_ts = int(datetime(2026, 6, 17, 0, 0, tzinfo=timezone.utc).timestamp())
+        published_ts = detected_ts + (20 * 3600)
+        anomaly = self._base_anomaly(
+            detected_ts=detected_ts,
+            anomaly_score=60.0,
+        )
+        article = self._base_article(
+            published_ts=published_ts,
+            source_type="primary_gov",
+        )
+
+        conf_decay, _, subs_decay, _, _ = correlation_engine._confidence_breakdown(
+            anomaly,
+            article,
+            time_diff=20 * 3600,
+            match_quality=0.5,
+            series_ticker="KXGDP",
+        )
+        conf_boost, _, subs_boost, _, event = correlation_engine._confidence_breakdown(
+            anomaly,
+            article,
+            time_diff=20 * 3600,
+            match_quality=0.5,
+            series_ticker="KXFED",
+        )
+        self.assertIsNotNone(event)
+        self.assertGreater(conf_boost, conf_decay)
+        self.assertGreaterEqual(subs_boost["leakage_plausibility_score"], 0.85)
+
+    def test_accepted_correlation_stores_sub_scores_in_explanation_json(self):
+        detected_ts = int(datetime(2026, 6, 17, 0, 0, tzinfo=timezone.utc).timestamp())
+        published_ts = detected_ts + 3600
+        article = self.fixtures["fed_rate_decision_true_positive"]
+
+        db.insert_anomaly({
+            "ticker": "KXFED-26DEC-T4.5",
+            "market_title": "Fed funds market",
+            "series_ticker": "KXFED",
+            "risk_group": "FOMC",
+            "mnpi_actors": "Fed governors",
+            "detected_ts": detected_ts,
+            "detected_time": "2026-06-17T00:00:00Z",
+            "anomaly_score": 70.0,
+            "volume_zscore": 10.0,
+            "block_trade_ratio": 0.4,
+            "directional_flag": 0.2,
+            "trigger_type": "compound",
+            "price_before": 0.45,
+            "price_current": 0.50,
+            "volume_in_window": 900,
+            "correlated_event": None,
+            "notes": "test",
+        })
+        db.insert_news_articles([{
+            "title": article["title"],
+            "description": article["description"],
+            "url": "https://example.gov/fed-rate-subscores",
+            "published_time": "2026-06-17T01:00:00Z",
+            "published_ts": published_ts,
+            "source": "Federal Reserve Press",
+            "source_type": "primary_gov",
+            "series_ticker": "KXFED",
+            "ingested_ts": int(time.time()),
+        }])
+
+        correlation_engine.correlate_all_recent_anomalies(lookback_days=30)
+        rows = db.get_correlations(limit=5)
+        self.assertEqual(len(rows), 1)
+        exp = rows[0]["explanation"]
+        self.assertIsNotNone(exp)
+        self.assertEqual(exp["score_type"], "leakage")
+        self.assertIn("market_microstructure_score", exp["sub_scores"])
 
 
 if __name__ == "__main__":
