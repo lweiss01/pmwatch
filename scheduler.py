@@ -2,8 +2,10 @@ import logging
 from pathlib import Path
 from datetime import datetime, timezone
 from apscheduler.schedulers.blocking import BlockingScheduler
+from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 import db
+import event_calendar_refresh
 import collector
 import scorer
 import cluster_scorer
@@ -101,6 +103,16 @@ if __name__ == "__main__":
         name="Prune historical data",
         max_instances=1,
         coalesce=True,
+    )
+
+    scheduler.add_job(
+        lambda: event_calendar_refresh.refresh_event_calendar(dry_run=False),
+        trigger=CronTrigger(day=1, hour=6, minute=0),
+        id="refresh_event_calendar",
+        name="Refresh FOMC/CPI scheduled event dates",
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=3600,
     )
 
     log.info(
