@@ -1,5 +1,6 @@
 # Database
 data/
+data/baseline/
 *.db
 
 # Logs
@@ -21,3 +22,4 @@ __pycache__/
 # Local artifacts
 .repo-report/
 smoke_inner.kml
+baseline_summary.py

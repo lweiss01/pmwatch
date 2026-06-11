@@ -1,0 +1,450 @@
+{
+  "captured_ts": 1781142278,
+  "total_anomalies": 117,
+  "by_ticker": [
+    {
+      "ticker": "KXCPI-26JUN-T0.1",
+      "flags": 5,
+      "peak": 66.7,
+      "avg_score": 47.9
+    },
+    {
+      "ticker": "KXCPI-26JUN-T0.3",
+      "flags": 4,
+      "peak": 81.6,
+      "avg_score": 51.1
+    },
+    {
+      "ticker": "KXCPI-26JUN-T0.2",
+      "flags": 4,
+      "peak": 100.0,
+      "avg_score": 67.8
+    },
+    {
+      "ticker": "KXCPI-26JUL-T0.4",
+      "flags": 4,
+      "peak": 30.0,
+      "avg_score": 30.0
+    },
+    {
+      "ticker": "KXCPI-26JUL-T0.1",
+      "flags": 4,
+      "peak": 30.0,
+      "avg_score": 30.0
+    },
+    {
+      "ticker": "KXNEXTAG-29-TBLA",
+      "flags": 3,
+      "peak": 100.0,
+      "avg_score": 100.0
+    },
+    {
+      "ticker": "KXNEXTAG-29-LZEL",
+      "flags": 3,
+      "peak": 100.0,
+      "avg_score": 78.1
+    },
+    {
+      "ticker": "KXIMPEACH-28-JAN01",
+      "flags": 3,
+      "peak": 65.1,
+      "avg_score": 42.8
+    },
+    {
+      "ticker": "KXFED-26JUN-T3.75",
+      "flags": 3,
+      "peak": 100.0,
+      "avg_score": 71.1
+    },
+    {
+      "ticker": "KXCPI-26MAY-T0.5",
+      "flags": 3,
+      "peak": 100.0,
+      "avg_score": 100.0
+    },
+    {
+      "ticker": "KXCPI-26MAY-T0.4",
+      "flags": 3,
+      "peak": 51.7,
+      "avg_score": 43.8
+    },
+    {
+      "ticker": "KXZELENSKYPUTIN-29-27",
+      "flags": 2,
+      "peak": 76.1,
+      "avg_score": 54.4
+    },
+    {
+      "ticker": "KXNEXTODNI-29-MELL",
+      "flags": 2,
+      "peak": 82.2,
+      "avg_score": 57.9
+    },
+    {
+      "ticker": "KXNEXTODNI-29-DNUN",
+      "flags": 2,
+      "peak": 58.0,
+      "avg_score": 46.6
+    },
+    {
+      "ticker": "KXNEXTAG-29-TCRU",
+      "flags": 2,
+      "peak": 100.0,
+      "avg_score": 78.3
+    },
+    {
+      "ticker": "KXNEXTAG-29-MGAE",
+      "flags": 2,
+      "peak": 100.0,
+      "avg_score": 62.7
+    },
+    {
+      "ticker": "KXNEXTAG-29-KPAX",
+      "flags": 2,
+      "peak": 39.0,
+      "avg_score": 33.5
+    },
+    {
+      "ticker": "KXNEXTAG-29-JPIR",
+      "flags": 2,
+      "peak": 100.0,
+      "avg_score": 68.5
+    },
+    {
+      "ticker": "KXNEXTAG-29-AHAB",
+      "flags": 2,
+      "peak": 48.7,
+      "avg_score": 48.7
+    },
+    {
+      "ticker": "KXIMPEACH-27-MAR01",
+      "flags": 2,
+      "peak": 45.6,
+      "avg_score": 44.9
+    },
+    {
+      "ticker": "KXIMPEACH-27-JAN01",
+      "flags": 2,
+      "peak": 100.0,
+      "avg_score": 83.5
+    },
+    {
+      "ticker": "KXGREENTERRITORY-29",
+      "flags": 2,
+      "peak": 100.0,
+      "avg_score": 100.0
+    },
+    {
+      "ticker": "KXCPI-26SEP-T0.0",
+      "flags": 2,
+      "peak": 100.0,
+      "avg_score": 94.8
+    },
+    {
+      "ticker": "KXCPI-26NOV-T0.4",
+      "flags": 2,
+      "peak": 100.0,
+      "avg_score": 100.0
+    },
+    {
+      "ticker": "KXCPI-26MAY-T0.2",
+      "flags": 2,
+      "peak": 100.0,
+      "avg_score": 100.0
+    },
+    {
+      "ticker": "KXCPI-26JUN-T0.4",
+      "flags": 2,
+      "peak": 100.0,
+      "avg_score": 63.9
+    },
+    {
+      "ticker": "KXCPI-26JUN-T0.0",
+      "flags": 2,
+      "peak": 79.3,
+      "avg_score": 56.1
+    },
+    {
+      "ticker": "KXCPI-26JUN-T-0.1",
+      "flags": 2,
+      "peak": 100.0,
+      "avg_score": 79.2
+    },
+    {
+      "ticker": "KXCPI-26JUL-T0.2",
+      "flags": 2,
+      "peak": 42.1,
+      "avg_score": 36.3
+    },
+    {
+      "ticker": "KXZELENSKYPUTIN-29-VPUT",
+      "flags": 1,
+      "peak": 100.0,
+      "avg_score": 100.0
+    },
+    {
+      "ticker": "KXTRUMPPARDONS-29JAN21-SCOM",
+      "flags": 1,
+      "peak": 27.1,
+      "avg_score": 27.1
+    },
+    {
+      "ticker": "KXTRUMPPARDONS-29JAN21-PROS",
+      "flags": 1,
+      "peak": 53.8,
+      "avg_score": 53.8
+    },
+    {
+      "ticker": "KXTRUMPPARDONS-29JAN21-GMAX",
+      "flags": 1,
+      "peak": 100.0,
+      "avg_score": 100.0
+    },
+    {
+      "ticker": "KXSCOURT-29-AO",
+      "flags": 1,
+      "peak": 41.8,
+      "avg_score": 41.8
+    },
+    {
+      "ticker": "KXRECOGROC-29",
+      "flags": 1,
+      "peak": 26.8,
+      "avg_score": 26.8
+    },
+    {
+      "ticker": "KXNEXTODNI-29-SPER",
+      "flags": 1,
+      "peak": 44.6,
+      "avg_score": 44.6
+    },
+    {
+      "ticker": "KXNEXTODNI-29-RCRA",
+      "flags": 1,
+      "peak": 100.0,
+      "avg_score": 100.0
+    },
+    {
+      "ticker": "KXNEXTODNI-29-MFLY",
+      "flags": 1,
+      "peak": 34.6,
+      "avg_score": 34.6
+    },
+    {
+      "ticker": "KXNEXTODNI-29-JRAT",
+      "flags": 1,
+      "peak": 100.0,
+      "avg_score": 100.0
+    },
+    {
+      "ticker": "KXNEXTODNI-29-ESTE",
+      "flags": 1,
+      "peak": 100.0,
+      "avg_score": 100.0
+    },
+    {
+      "ticker": "KXNEXTODNI-29-BPUL",
+      "flags": 1,
+      "peak": 100.0,
+      "avg_score": 100.0
+    },
+    {
+      "ticker": "KXNEXTODNI-29-ALUK",
+      "flags": 1,
+      "peak": 100.0,
+      "avg_score": 100.0
+    },
+    {
+      "ticker": "KXINSURRECTION-29-27",
+      "flags": 1,
+      "peak": 33.9,
+      "avg_score": 33.9
+    },
+    {
+      "ticker": "KXINSURRECTION-29",
+      "flags": 1,
+      "peak": 63.7,
+      "avg_score": 63.7
+    },
+    {
+      "ticker": "KXIMPEACH-26-SEP01",
+      "flags": 1,
+      "peak": 100.0,
+      "avg_score": 100.0
+    },
+    {
+      "ticker": "KXGREENTERRITORY-29-27",
+      "flags": 1,
+      "peak": 45.0,
+      "avg_score": 45.0
+    },
+    {
+      "ticker": "KXGDP-26JUL30-T3.0",
+      "flags": 1,
+      "peak": 47.4,
+      "avg_score": 47.4
+    },
+    {
+      "ticker": "KXGDP-26JUL30-T2.5",
+      "flags": 1,
+      "peak": 44.9,
+      "avg_score": 44.9
+    },
+    {
+      "ticker": "KXGDP-26JUL30-T1.0",
+      "flags": 1,
+      "peak": 56.3,
+      "avg_score": 56.3
+    },
+    {
+      "ticker": "KXFED-27MAR-T3.50",
+      "flags": 1,
+      "peak": 30.0,
+      "avg_score": 30.0
+    },
+    {
+      "ticker": "KXFED-27JAN-T3.50",
+      "flags": 1,
+      "peak": 100.0,
+      "avg_score": 100.0
+    },
+    {
+      "ticker": "KXFED-27APR-T4.00",
+      "flags": 1,
+      "peak": 100.0,
+      "avg_score": 100.0
+    },
+    {
+      "ticker": "KXFED-27APR-T2.25",
+      "flags": 1,
+      "peak": 73.2,
+      "avg_score": 73.2
+    },
+    {
+      "ticker": "KXFED-26SEP-T4.50",
+      "flags": 1,
+      "peak": 58.6,
+      "avg_score": 58.6
+    },
+    {
+      "ticker": "KXFED-26SEP-T3.75",
+      "flags": 1,
+      "peak": 27.8,
+      "avg_score": 27.8
+    },
+    {
+      "ticker": "KXFED-26JUN-T3.50",
+      "flags": 1,
+      "peak": 100.0,
+      "avg_score": 100.0
+    },
+    {
+      "ticker": "KXFED-26DEC-T4.25",
+      "flags": 1,
+      "peak": 25.2,
+      "avg_score": 25.2
+    },
+    {
+      "ticker": "KXCPI-26SEP-T0.5",
+      "flags": 1,
+      "peak": 26.6,
+      "avg_score": 26.6
+    },
+    {
+      "ticker": "KXCPI-26OCT-T0.4",
+      "flags": 1,
+      "peak": 100.0,
+      "avg_score": 100.0
+    },
+    {
+      "ticker": "KXCPI-26OCT-T0.3",
+      "flags": 1,
+      "peak": 38.7,
+      "avg_score": 38.7
+    },
+    {
+      "ticker": "KXCPI-26OCT-T0.0",
+      "flags": 1,
+      "peak": 99.4,
+      "avg_score": 99.4
+    },
+    {
+      "ticker": "KXCPI-26NOV-T0.5",
+      "flags": 1,
+      "peak": 100.0,
+      "avg_score": 100.0
+    },
+    {
+      "ticker": "KXCPI-26MAY-T0.8",
+      "flags": 1,
+      "peak": 100.0,
+      "avg_score": 100.0
+    },
+    {
+      "ticker": "KXCPI-26MAY-T0.7",
+      "flags": 1,
+      "peak": 100.0,
+      "avg_score": 100.0
+    },
+    {
+      "ticker": "KXCPI-26MAY-T0.6",
+      "flags": 1,
+      "peak": 100.0,
+      "avg_score": 100.0
+    },
+    {
+      "ticker": "KXCANTERRITORY-29",
+      "flags": 1,
+      "peak": 28.4,
+      "avg_score": 28.4
+    },
+    {
+      "ticker": "KXCABOUT-26MAY22-SWIL",
+      "flags": 1,
+      "peak": 100.0,
+      "avg_score": 100.0
+    },
+    {
+      "ticker": "KXCABOUT-26MAY22-RFK",
+      "flags": 1,
+      "peak": 53.9,
+      "avg_score": 53.9
+    },
+    {
+      "ticker": "KXCABOUT-26MAY22-PHEG",
+      "flags": 1,
+      "peak": 100.0,
+      "avg_score": 100.0
+    },
+    {
+      "ticker": "KXCABOUT-26MAY22-LZEL",
+      "flags": 1,
+      "peak": 100.0,
+      "avg_score": 100.0
+    },
+    {
+      "ticker": "KXAGENCYELIM-29-IRS",
+      "flags": 1,
+      "peak": 69.3,
+      "avg_score": 69.3
+    }
+  ],
+  "by_trigger": [
+    {
+      "trigger_type": "compound",
+      "n": 69
+    },
+    {
+      "trigger_type": "price_divergence",
+      "n": 11
+    },
+    {
+      "trigger_type": "volume_spike",
+      "n": 37
+    }
+  ],
+  "severity": {
+    "red": 56,
+    "yellow": 61
+  }
+}
