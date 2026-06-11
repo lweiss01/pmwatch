@@ -66,19 +66,26 @@ def _slope(xs: list[float], ys: list[float]) -> float:
     return num / den if den != 0 else 0.0
 
 
-def _directional_consistency(events: list[dict]) -> float:
-    """Fraction of events with directional_flag above threshold.
+def _dominant_side(event: dict) -> str:
+    side = event.get("dominant_side")
+    if side in ("yes", "no", "neutral"):
+        return side
+    flag = event.get("directional_flag") or 0.0
+    if flag > 0.05:
+        return "no"
+    return "neutral"
 
-    A cluster where every event has high directional_flag (all NO-side block
-    accumulation, or all YES-side) is far more suspicious than a mixed cluster.
-    """
+
+def _directional_consistency(events: list[dict]) -> float:
+    """Fraction of events sharing the same dominant_side (yes/no accumulation)."""
     if not events:
         return 0.0
-    directional = sum(
-        1 for e in events
-        if (e.get("directional_flag") or 0.0) > DIRECTIONAL_THRESHOLD
-    )
-    return directional / len(events)
+    sides = [_dominant_side(e) for e in events]
+    directional = [s for s in sides if s != "neutral"]
+    if not directional:
+        return 0.0
+    target = max(set(directional), key=directional.count)
+    return sum(1 for s in sides if s == target) / len(events)
 
 
 def _score_trend(events: list[dict]) -> float:
@@ -164,6 +171,7 @@ def compute_cluster_record(ticker: str, events: list[dict]) -> dict:
 
     return {
         "ticker": ticker,
+        "cluster_key": str(first.get("id", first["detected_ts"])),
         "series_ticker": first.get("series_ticker", ""),
         "market_title": first.get("market_title", ""),
         "risk_group": first.get("risk_group", ""),
@@ -203,7 +211,7 @@ def run_cluster_scorer(lookback_days: int = 30) -> int:
         """
         SELECT id, ticker, market_title, series_ticker, risk_group, mnpi_actors,
                detected_ts, detected_time, anomaly_score, volume_zscore,
-               block_trade_ratio, directional_flag, trigger_type
+               block_trade_ratio, directional_flag, dominant_side, trigger_type
         FROM anomalies
         WHERE detected_ts >= ?
         ORDER BY ticker, detected_ts ASC
@@ -239,6 +247,13 @@ def run_cluster_scorer(lookback_days: int = 30) -> int:
 
     # Bulk upsert all clusters in one transaction
     written = db.upsert_clusters_bulk(records)
+
+    # Drop cluster rows whose window ended before lookback (stale identity cleanup).
+    stale_cutoff = int(time.time()) - (lookback_days * 86400)
+    conn = db.get_conn()
+    conn.execute("DELETE FROM clusters WHERE last_seen_ts < ?", (stale_cutoff,))
+    conn.commit()
+    conn.close()
 
     log.info("=== Cluster scorer complete: %d clusters written ===", written)
     return written

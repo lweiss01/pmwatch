@@ -206,13 +206,12 @@ def detect_wash_trading(ticker, recent_trades, window_seconds=60):
             # Opposite taker side
             opp_side = t1["side"] != t2["side"]
             
-            if qty_match and opp_side:
+            if qty_match and opp_side and t1["price"] == t2["price"]:
                 flagged_ids.add(t1["id"])
                 flagged_ids.add(t2["id"])
-                
-                # Severity scales with trade size and inverse of time gap
-                severity = (t1["count"] / 100.0) * (60.0 / max(1, time_diff))
-                
+
+                severity = (t1["count"] / 100.0) * (60.0 / max(1, time_diff)) * 0.5
+
                 alerts.append({
                     "ticker": ticker,
                     "alert_type": "wash_trading",
@@ -223,7 +222,8 @@ def detect_wash_trading(ticker, recent_trades, window_seconds=60):
                         "qty": t1["count"],
                         "price_1": t1["price"],
                         "price_2": t2["price"],
-                        "time_gap_sec": time_diff
+                        "time_gap_sec": time_diff,
+                        "confidence": "low",
                     }
                 })
     return alerts

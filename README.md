@@ -37,7 +37,9 @@ Prediction market contracts trade within fixed bounds ($0.00–$1.00). `pmwatch`
 
 ### Volume Anomaly Scoring (`scorer.py`)
 
-* **Compound scoring** from volume Z-score, block-trade ratio, and price divergence.
+* **Compound scoring** from volume Z-score (robust median/MAD), block-trade ratio, price divergence, and open-interest delta.
+* **Signal windows** — block trades use a 120-minute window; price divergence uses 360 minutes (not full 7-day history).
+* **Formula versioning** — `score_history.formula_version` tracks scorer changes; adaptive thresholds filter by current version.
 * **Score cap at 100** — prevents uncapped outliers from inflating downstream correlation confidence.
 * **Score-delta deduplication** — suppresses re-flags within a configurable window (default 2 hours) unless the new score is materially higher (default ≥20%).
 * **MNPI clearance tiers** — watchlist actor structure (tiers 1–3) applies multipliers to base scores for higher-trust actor groups.
@@ -54,7 +56,7 @@ Correlations are no longer naive keyword substring matches. The pipeline uses:
 * **Expected-event temporal floors** (`expected_events.py`) — FOMC and CPI release windows in `config.json` raise the temporal multiplier floor for long pre-news leads inside scheduled windows (reduces false negatives on recurring macro events).
 * **Minimum confidence threshold** (default 12.0, configurable) — weak matches are discarded.
 * **Minimum match quality** (default 0.35, configurable) — applied at ingest and correlation time.
-* **Structured explanations** — accepted/rejected correlations persist `explanation_json` with match rationale, temporal direction, confidence components, and sub-scores.
+* **Structured explanations** — accepted correlations persist `explanation_json`; tuning pairs persist in `correlation_decisions` (with `matcher_version` for before/after diffs).
 * **Source weighting** — disclosure filings 2.0×, primary government 1.5×, mainstream news 1.0×.
 
 ### News & Disclosure Ingestion (`feed_ingestion.py`)

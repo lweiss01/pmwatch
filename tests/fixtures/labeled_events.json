@@ -1,0 +1,16 @@
+{
+  "events": [
+    {
+      "label": "FOMC rate decision",
+      "series": ["KXFED"],
+      "date": "2026-06-18",
+      "source": "Federal Reserve Press"
+    },
+    {
+      "label": "CPI release",
+      "series": ["KXCPI"],
+      "date": "2026-06-11",
+      "source": "BLS"
+    }
+  ]
+}

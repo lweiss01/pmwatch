@@ -39,14 +39,18 @@ def _group_time_windows(events: list[dict], window_hours: float = CROSS_MARKET_W
     return groups
 
 
+def parse_actor_tags(mnpi_actors: str) -> list[str]:
+    """Split comma-separated MNPI actor string into canonical tags."""
+    return sorted({part.strip() for part in mnpi_actors.split(",") if part.strip()})
+
+
 def _cross_market_score(events: list[dict], series_count: int) -> float:
     scores = [float(e["anomaly_score"]) for e in events]
     total = sum(scores)
-    series_bonus = 1.0 + (0.25 * max(0, series_count - 1))
-    return round(total * series_bonus * math.log(series_count + 1), 2)
+    return round(total * math.log(series_count + 1), 2)
 
 
-def build_cross_market_record(mnpi_actors: str, events: list[dict]) -> dict:
+def build_cross_market_record(actor_tag: str, events: list[dict]) -> dict:
     events_sorted = sorted(events, key=lambda e: e["detected_ts"])
     series_tickers = sorted({e["series_ticker"] for e in events_sorted if e.get("series_ticker")})
     tickers = sorted({e["ticker"] for e in events_sorted if e.get("ticker")})
@@ -56,7 +60,7 @@ def build_cross_market_record(mnpi_actors: str, events: list[dict]) -> dict:
     series_count = len(series_tickers)
 
     return {
-        "mnpi_actors": mnpi_actors,
+        "mnpi_actors": actor_tag,
         "series_tickers": ",".join(series_tickers),
         "tickers": ",".join(tickers),
         "window_start_ts": first["detected_ts"],
@@ -73,7 +77,7 @@ def build_cross_market_record(mnpi_actors: str, events: list[dict]) -> dict:
 
 
 def run_cross_market_scorer(lookback_days: int = 7) -> int:
-    """Find and persist cross-series anomaly clusters grouped by mnpi_actors."""
+    """Find cross-series clusters per canonical MNPI actor tag (no transitive chaining)."""
     log.info("=== Cross-market scorer started ===")
     conn = db.get_conn()
     c = conn.cursor()
@@ -88,30 +92,30 @@ def run_cross_market_scorer(lookback_days: int = 7) -> int:
           AND TRIM(mnpi_actors) != ''
           AND series_ticker IS NOT NULL
           AND TRIM(series_ticker) != ''
-        ORDER BY mnpi_actors, detected_ts ASC
+        ORDER BY detected_ts ASC
         """,
         (cutoff_ts,),
     )
     all_anomalies = [dict(r) for r in c.fetchall()]
     conn.close()
 
-    by_actor: dict[str, list[dict]] = {}
+    by_tag: dict[str, list[dict]] = {}
     for event in all_anomalies:
-        actor_key = event["mnpi_actors"].strip()
-        by_actor.setdefault(actor_key, []).append(event)
+        for tag in parse_actor_tags(event["mnpi_actors"]):
+            by_tag.setdefault(tag, []).append(event)
 
     records: list[dict] = []
-    for actor_key, events in by_actor.items():
+    for actor_tag, events in by_tag.items():
         for window_events in _group_time_windows(events):
             series_tickers = {e["series_ticker"] for e in window_events if e.get("series_ticker")}
             if len(series_tickers) < MIN_CROSS_MARKET_SERIES:
                 continue
 
-            record = build_cross_market_record(actor_key, window_events)
+            record = build_cross_market_record(actor_tag, window_events)
             records.append(record)
             log.info(
-                "CROSS-MARKET %s | series=%s | count=%d | score=%.1f",
-                actor_key[:40],
+                "CROSS-MARKET tag=%s | series=%s | count=%d | score=%.1f",
+                actor_tag[:40],
                 record["series_tickers"],
                 record["anomaly_count"],
                 record["cluster_score"],

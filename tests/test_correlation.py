@@ -479,7 +479,7 @@ class TestCorrelationTemporalModel(unittest.TestCase):
         strong = self.fixtures["fed_rate_decision_true_positive"]
         weak = {
             "title": "Federal Reserve Board policy update",
-            "description": "The Federal Reserve noted ongoing monetary policy work.",
+            "description": "The Federal Reserve noted ongoing institutional work.",
         }
         db.insert_news_articles([
             {
