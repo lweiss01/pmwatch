@@ -84,7 +84,13 @@ def fetch_recent_trades(ticker: str, max_pages: int = 10) -> list:
                 dt = config.parse_iso_datetime(created_time)
                 created_ts = int(dt.timestamp())
             except Exception:
-                created_ts = 0
+                log.warning(
+                    "Skipping trade with unparseable created_time ticker=%s trade_id=%s time=%r",
+                    ticker,
+                    t.get("trade_id", ""),
+                    created_time,
+                )
+                continue
 
             trades.append({
                 "trade_id": t.get("trade_id", ""),

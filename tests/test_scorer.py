@@ -32,13 +32,28 @@ def _minimal_trades(count: int = 12) -> list:
     ]
 
 
+def _block_mock(**overrides) -> dict:
+    base = {
+        "ratio": 0.1,
+        "directional_no": 0.0,
+        "directional_yes": 0.0,
+        "directional_imbalance": 0.0,
+        "dominant_side": "neutral",
+        "count": 20,
+    }
+    base.update(overrides)
+    return base
+
+
 class TestScorerHygiene(unittest.TestCase):
     @patch.object(scorer, "price_divergence_from_trades")
     @patch.object(scorer, "block_trade_signal_from_trades")
     @patch.object(scorer, "volume_zscore_from_trades")
     def test_score_capped_at_100(self, mock_vol, mock_block, mock_price):
         mock_vol.return_value = 25.0
-        mock_block.return_value = {"ratio": 2.0, "directional_no": 1.0, "count": 100}
+        mock_block.return_value = _block_mock(
+            ratio=2.0, directional_no=1.0, directional_imbalance=1.0, dominant_side="no", count=100
+        )
         mock_price.return_value = {
             "max_jump": 0.5,
             "direction": "up",
@@ -56,7 +71,7 @@ class TestScorerHygiene(unittest.TestCase):
     @patch.object(scorer, "volume_zscore_from_trades")
     def test_yellow_threshold_unchanged(self, mock_vol, mock_block, mock_price):
         mock_vol.return_value = 3.0
-        mock_block.return_value = {"ratio": 0.1, "directional_no": 0.0, "count": 20}
+        mock_block.return_value = _block_mock(ratio=0.1)
         mock_price.return_value = {
             "max_jump": 0.05,
             "direction": "up",
@@ -73,7 +88,7 @@ class TestScorerHygiene(unittest.TestCase):
     @patch.object(scorer, "volume_zscore_from_trades")
     def test_dedup_suppresses_small_increase(self, mock_vol, mock_block, mock_price):
         mock_vol.return_value = 4.0
-        mock_block.return_value = {"ratio": 0.2, "directional_no": 0.1, "count": 20}
+        mock_block.return_value = _block_mock(ratio=0.2, directional_no=0.1, directional_imbalance=0.1)
         mock_price.return_value = {
             "max_jump": 0.08,
             "direction": "up",
@@ -94,7 +109,9 @@ class TestScorerHygiene(unittest.TestCase):
     @patch.object(scorer, "volume_zscore_from_trades")
     def test_dedup_allows_large_increase(self, mock_vol, mock_block, mock_price):
         mock_vol.return_value = 8.0
-        mock_block.return_value = {"ratio": 0.5, "directional_no": 0.2, "count": 40}
+        mock_block.return_value = _block_mock(
+            ratio=0.5, directional_no=0.2, directional_imbalance=0.3, count=40
+        )
         mock_price.return_value = {
             "max_jump": 0.15,
             "direction": "up",
@@ -129,7 +146,7 @@ class TestScorerHygiene(unittest.TestCase):
     @patch.object(scorer, "volume_zscore_from_trades")
     def test_clearance_tier_boosts_base_score(self, mock_vol, mock_block, mock_price):
         mock_vol.return_value = 4.0
-        mock_block.return_value = {"ratio": 0.0, "directional_no": 0.0, "count": 20}
+        mock_block.return_value = _block_mock(ratio=0.0)
         mock_price.return_value = {
             "max_jump": 0.0,
             "direction": "none",
@@ -164,7 +181,7 @@ class TestScorerHygiene(unittest.TestCase):
         self, mock_vol, mock_block, mock_price, _mock_yellow
     ):
         mock_vol.return_value = 3.0
-        mock_block.return_value = {"ratio": 0.1, "directional_no": 0.0, "count": 20}
+        mock_block.return_value = _block_mock(ratio=0.1)
         mock_price.return_value = {
             "max_jump": 0.05,
             "direction": "up",
@@ -180,7 +197,7 @@ class TestScorerHygiene(unittest.TestCase):
     @patch.object(scorer, "volume_zscore_from_trades")
     def test_notes_include_score_components(self, mock_vol, mock_block, mock_price):
         mock_vol.return_value = 4.0
-        mock_block.return_value = {"ratio": 0.2, "directional_no": 0.1, "count": 20}
+        mock_block.return_value = _block_mock(ratio=0.2, directional_no=0.1, directional_imbalance=0.1)
         mock_price.return_value = {
             "max_jump": 0.08,
             "direction": "up",
@@ -199,6 +216,122 @@ class TestScorerHygiene(unittest.TestCase):
         self.assertIn("block_modifier", comps)
         self.assertIn("normalized_score", comps)
         self.assertEqual(comps["normalized_score"], result["anomaly_score"])
+
+
+class TestScorerSignalWindows(unittest.TestCase):
+    """Integration tests for 120/360-minute window filtering (Phase 1 regression)."""
+
+    def _trade(
+        self,
+        now: int,
+        age_seconds: int,
+        count_fp: float = 100.0,
+        yes_price: float = 0.45,
+        is_block: int = 0,
+        taker_side: str = "yes",
+    ) -> dict:
+        return {
+            "created_ts": now - age_seconds,
+            "count_fp": count_fp,
+            "yes_price_dollars": yes_price,
+            "no_price_dollars": 1.0 - yes_price,
+            "taker_side": taker_side,
+            "is_block_trade": is_block,
+        }
+
+    def test_price_jump_five_days_ago_produces_zero_bonus(self):
+        now = 1_781_000_000
+        trades = []
+        # Old price regime (low) — 5 days ago
+        for i in range(8):
+            trades.append(
+                self._trade(now, 5 * 86400 + i * 600, yes_price=0.40)
+            )
+        # Recent flat price — within 360 min
+        for i in range(12):
+            trades.append(
+                self._trade(now, i * 300, yes_price=0.40)
+            )
+
+        with patch("scorer.time.time", return_value=now):
+            price = scorer.price_divergence_from_trades(
+                scorer.filter_trades_by_window(trades, scorer.PRICE_WINDOW_MINUTES, now)
+            )
+
+        self.assertEqual(price["max_jump"], 0.0)
+
+    def test_fresh_block_burst_elevates_block_modifier(self):
+        now = 1_781_000_000
+        trades = []
+        # Week-old non-block volume
+        for i in range(20):
+            trades.append(
+                self._trade(now, 6 * 86400 + i * 300, count_fp=50.0, is_block=0)
+            )
+        # Fresh block burst in last 120 min
+        for i in range(5):
+            trades.append(
+                self._trade(
+                    now,
+                    i * 600,
+                    count_fp=500.0,
+                    is_block=1,
+                    taker_side="no",
+                )
+            )
+
+        with patch("scorer.time.time", return_value=now):
+            block_window = scorer.filter_trades_by_window(
+                trades, scorer.BLOCK_WINDOW_MINUTES, now
+            )
+            block_recent = scorer.block_trade_signal_from_trades(block_window)
+            block_all = scorer.block_trade_signal_from_trades(trades)
+
+        self.assertGreater(block_recent["ratio"], 0.5)
+        self.assertLess(block_all["ratio"], block_recent["ratio"])
+
+    def test_filter_trades_by_window_excludes_old_trades(self):
+        now = 1_781_000_000
+        trades = [
+            self._trade(now, 60, count_fp=10),
+            self._trade(now, 3 * 3600, count_fp=20),
+            self._trade(now, 5 * 86400, count_fp=999),
+        ]
+        filtered = scorer.filter_trades_by_window(trades, 120, now)
+        self.assertEqual(len(filtered), 1)
+        self.assertEqual(filtered[0]["count_fp"], 10.0)
+
+    def test_volume_in_window_sums_contracts_not_trade_count(self):
+        now = 1_781_000_000
+        trades = [
+            self._trade(now, 60, count_fp=25.0),
+            self._trade(now, 120, count_fp=75.0),
+            self._trade(now, 5 * 86400, count_fp=1000.0),
+        ]
+        with patch("scorer.time.time", return_value=now):
+            vol = scorer.volume_in_window(trades, scorer.BLOCK_WINDOW_MINUTES)
+        self.assertEqual(vol, 100.0)
+
+
+    def test_quiet_market_tiny_trade_returns_zero_z(self):
+        now = 1_781_000_000
+        window_sec = scorer.BLOCK_WINDOW_MINUTES * 60
+        trades = []
+        # Baseline: many zero-volume bins with sparse history
+        for day in range(5, 8):
+            for hour in range(0, 24, 2):
+                trades.append(
+                    self._trade(now, day * 86400 + hour * 3600, count_fp=0.0)
+                )
+        # One tiny recent trade (below quiet_market_min_volume default 15)
+        trades.append(self._trade(now, 60, count_fp=1.0))
+
+        with patch("scorer.time.time", return_value=now):
+            with patch.object(config, "get_quiet_market_min_volume", return_value=15.0):
+                z = scorer.volume_zscore_from_trades(
+                    trades, window_minutes=scorer.BLOCK_WINDOW_MINUTES, now_ts=now
+                )
+        self.assertEqual(z, 0.0)
 
 
 if __name__ == "__main__":
