@@ -26,6 +26,7 @@ log = logging.getLogger(__name__)
 HTTP_USER_AGENT = (
     "pmwatch/1.0 (local transparency research; +https://github.com/lweiss01/pmwatch)"
 )
+HTTP_RSS_ACCEPT = "application/rss+xml, application/xml, text/xml, */*"
 SEC_USER_AGENT = "pmwatch transparency tool (pmwatch@users.noreply.github.com)"
 
 HOUSE_FD_ZIP_URL = (
@@ -300,7 +301,7 @@ DEFAULT_FEEDS = [
         "source_type": "primary_gov",
     },
     {
-        "url": "https://www.treasurydirect.gov/xml/RssOffering.xml",
+        "url": "https://www.treasurydirect.gov/TA_WS/securities/announced/rss",
         "source": "TreasuryDirect Offerings",
         "source_type": "primary_gov",
     },
@@ -416,7 +417,13 @@ def fetch_and_ingest_feeds() -> int:
             user_agent = HTTP_USER_AGENT
             if feed.get("user_agent") == "sec":
                 user_agent = SEC_USER_AGENT
-            req = urllib.request.Request(url, headers={"User-Agent": user_agent})
+            req = urllib.request.Request(
+                url,
+                headers={
+                    "User-Agent": user_agent,
+                    "Accept": HTTP_RSS_ACCEPT,
+                },
+            )
             with urllib.request.urlopen(req, timeout=15) as response:
                 xml_data = response.read().decode("utf-8", errors="ignore")
 
