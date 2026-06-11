@@ -229,5 +229,48 @@ class TestDBForensics(unittest.TestCase):
         parsed = db._attach_score_components([dict(row)])[0]["score_components"]
         self.assertEqual(parsed["normalized_score"], 62.7)
 
+    def test_score_history_insert(self):
+        db.init_db()
+        db.insert_score_history({
+            "run_ts": 1781000000,
+            "ticker": "KXFED-TEST",
+            "series_ticker": "KXFED",
+            "formula_version": 1,
+            "flagged": False,
+            "anomaly_score": 18.5,
+            "score_components": {"normalized_score": 18.5},
+            "reject_reason": "below_yellow",
+        })
+        conn = db.get_conn()
+        row = conn.execute(
+            "SELECT flagged, reject_reason, formula_version FROM score_history WHERE ticker = ?",
+            ("KXFED-TEST",),
+        ).fetchone()
+        conn.close()
+        self.assertIsNotNone(row)
+        self.assertEqual(row["flagged"], 0)
+        self.assertEqual(row["reject_reason"], "below_yellow")
+
+    def test_correlation_decision_version_coexist(self):
+        db.init_db()
+        for version, decision, score in ((1, "reject", 10.0), (2, "accept", 45.0)):
+            db.upsert_correlation_decision({
+                "run_ts": 1781000000,
+                "anomaly_id": 1,
+                "news_id": 2,
+                "matcher_version": version,
+                "ticker": "KXFED-TEST",
+                "decision": decision,
+                "confidence_score": score,
+                "explanation": {"decision": decision, "matcher_version": version},
+            })
+        conn = db.get_conn()
+        count = conn.execute(
+            "SELECT COUNT(*) AS n FROM correlation_decisions WHERE anomaly_id = 1 AND news_id = 2"
+        ).fetchone()["n"]
+        conn.close()
+        self.assertEqual(count, 2)
+
+
 if __name__ == "__main__":
     unittest.main()

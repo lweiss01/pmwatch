@@ -11,7 +11,20 @@
     "yellow_score": 25.0,
     "red_score": 60.0,
     "dedup_hours": 2,
-    "score_delta_threshold": 0.2
+    "score_delta_threshold": 0.2,
+    "quiet_market_spike_z": 4.0,
+    "quiet_market_min_volume": 15,
+    "oi_max_bonus": 3.0,
+    "oi_z_weight": 1.5,
+    "adaptive_threshold_enabled": false,
+    "adaptive_percentile": 99,
+    "adaptive_history_days": 90,
+    "adaptive_min_samples": 50
+  },
+  "retention": {
+    "trade_days": 120,
+    "score_history_days": 90,
+    "correlation_decisions_days": 90
   },
   "scheduled_events": {
     "enabled": true,

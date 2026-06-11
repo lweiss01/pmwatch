@@ -26,6 +26,19 @@ DEFAULT_SCORER_THRESHOLDS = {
     "red_score": 60.0,
     "dedup_hours": 2,
     "score_delta_threshold": 0.20,
+    "quiet_market_spike_z": 4.0,
+    "quiet_market_min_volume": 15.0,
+    "oi_max_bonus": 3.0,
+    "oi_z_weight": 1.5,
+    "adaptive_threshold_enabled": False,
+    "adaptive_percentile": 99,
+    "adaptive_history_days": 90,
+    "adaptive_min_samples": 50,
+}
+DEFAULT_RETENTION = {
+    "trade_days": 120,
+    "score_history_days": 90,
+    "correlation_decisions_days": 90,
 }
 
 SETTINGS_PATCH_ALLOWLIST = {
@@ -88,6 +101,62 @@ def get_dedup_hours() -> int:
 
 def get_score_delta_threshold() -> float:
     return float(get_scorer_thresholds()["score_delta_threshold"])
+
+
+def get_quiet_market_spike_z() -> float:
+    return float(get_scorer_thresholds()["quiet_market_spike_z"])
+
+
+def get_quiet_market_min_volume() -> float:
+    return float(get_scorer_thresholds()["quiet_market_min_volume"])
+
+
+def get_oi_max_bonus() -> float:
+    return float(get_scorer_thresholds()["oi_max_bonus"])
+
+
+def get_oi_z_weight() -> float:
+    return float(get_scorer_thresholds()["oi_z_weight"])
+
+
+def get_adaptive_threshold_enabled() -> bool:
+    return bool(get_scorer_thresholds()["adaptive_threshold_enabled"])
+
+
+def get_adaptive_percentile() -> float:
+    return float(get_scorer_thresholds()["adaptive_percentile"])
+
+
+def get_adaptive_history_days() -> int:
+    return int(get_scorer_thresholds()["adaptive_history_days"])
+
+
+def get_adaptive_min_samples() -> int:
+    return int(get_scorer_thresholds()["adaptive_min_samples"])
+
+
+def get_retention_settings() -> dict[str, Any]:
+    cfg = load_config()
+    section = cfg.get("retention", {})
+    if not isinstance(section, dict):
+        return dict(DEFAULT_RETENTION)
+    merged = dict(DEFAULT_RETENTION)
+    for key, value in section.items():
+        if key in DEFAULT_RETENTION and value is not None:
+            merged[key] = value
+    return merged
+
+
+def get_trade_retention_days() -> int:
+    return int(get_retention_settings()["trade_days"])
+
+
+def get_score_history_retention_days() -> int:
+    return int(get_retention_settings()["score_history_days"])
+
+
+def get_correlation_decisions_retention_days() -> int:
+    return int(get_retention_settings()["correlation_decisions_days"])
 
 
 def load_config() -> dict:

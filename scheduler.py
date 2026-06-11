@@ -97,7 +97,7 @@ if __name__ == "__main__":
     )
 
     scheduler.add_job(
-        lambda: db.prune_historical_data(order_book_days=14, trade_days=30),
+        lambda: db.prune_historical_data(order_book_days=14),
         trigger=IntervalTrigger(days=1),
         id="prune_historical_data",
         name="Prune historical data",

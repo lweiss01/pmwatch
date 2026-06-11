@@ -204,6 +204,7 @@ def init_db():
     _ensure_watched_markets_columns(conn)
     _ensure_anomaly_columns(conn)
     _ensure_correlation_columns(conn)
+    _ensure_observability_tables(conn)
 
     conn.execute("PRAGMA journal_mode=WAL")
     conn.commit()
@@ -232,6 +233,12 @@ def _ensure_anomaly_columns(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE anomalies ADD COLUMN subject_name TEXT")
     if "score_components_json" not in existing:
         conn.execute("ALTER TABLE anomalies ADD COLUMN score_components_json TEXT")
+    if "anomaly_window_start_ts" not in existing:
+        conn.execute("ALTER TABLE anomalies ADD COLUMN anomaly_window_start_ts INTEGER")
+    if "directional_imbalance" not in existing:
+        conn.execute("ALTER TABLE anomalies ADD COLUMN directional_imbalance REAL")
+    if "dominant_side" not in existing:
+        conn.execute("ALTER TABLE anomalies ADD COLUMN dominant_side TEXT")
 
 
 def _attach_score_components(rows: list) -> list:
@@ -253,6 +260,49 @@ def _ensure_correlation_columns(conn: sqlite3.Connection) -> None:
     existing = {row[1] for row in conn.execute("PRAGMA table_info(news_correlations)")}
     if "explanation_json" not in existing:
         conn.execute("ALTER TABLE news_correlations ADD COLUMN explanation_json TEXT")
+
+
+def _ensure_observability_tables(conn: sqlite3.Connection) -> None:
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS score_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_ts INTEGER NOT NULL,
+            ticker TEXT NOT NULL,
+            series_ticker TEXT,
+            formula_version INTEGER NOT NULL DEFAULT 1,
+            flagged INTEGER NOT NULL,
+            anomaly_score REAL,
+            score_components_json TEXT,
+            reject_reason TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_score_history_ticker_run
+            ON score_history(ticker, run_ts);
+
+        CREATE TABLE IF NOT EXISTS correlation_decisions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_ts INTEGER NOT NULL,
+            anomaly_id INTEGER NOT NULL,
+            news_id INTEGER NOT NULL,
+            matcher_version INTEGER NOT NULL DEFAULT 1,
+            ticker TEXT,
+            decision TEXT NOT NULL,
+            confidence_score REAL,
+            explanation_json TEXT NOT NULL,
+            UNIQUE(anomaly_id, news_id, matcher_version)
+        );
+        CREATE INDEX IF NOT EXISTS idx_corr_decisions_version
+            ON correlation_decisions(matcher_version, anomaly_id);
+
+        CREATE TABLE IF NOT EXISTS correlation_run_summary (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_ts INTEGER NOT NULL,
+            anomalies_evaluated INTEGER,
+            pairs_temporal_excluded INTEGER,
+            pairs_persisted INTEGER,
+            accepts INTEGER,
+            rejects_by_reason_json TEXT
+        );
+    """)
 
 
 def upsert_market(market: dict, conn: sqlite3.Connection | None = None):
@@ -357,22 +407,41 @@ def insert_anomaly(anomaly: dict):
     c.execute("""
         INSERT INTO anomalies
             (ticker, market_title, series_ticker, risk_group, mnpi_actors,
-             subject_name,
-             detected_ts, detected_time, anomaly_score, volume_zscore,
-             block_trade_ratio, directional_flag, trigger_type,
+             subject_name, detected_ts, detected_time, anomaly_window_start_ts,
+             anomaly_score, volume_zscore, block_trade_ratio, directional_flag,
+             directional_imbalance, dominant_side, trigger_type,
              price_before, price_current, volume_in_window,
              correlated_event, notes, score_components_json)
         VALUES
             (:ticker, :market_title, :series_ticker, :risk_group, :mnpi_actors,
-             :subject_name,
-             :detected_ts, :detected_time, :anomaly_score, :volume_zscore,
-             :block_trade_ratio, :directional_flag, :trigger_type,
+             :subject_name, :detected_ts, :detected_time, :anomaly_window_start_ts,
+             :anomaly_score, :volume_zscore, :block_trade_ratio, :directional_flag,
+             :directional_imbalance, :dominant_side, :trigger_type,
              :price_before, :price_current, :volume_in_window,
              :correlated_event, :notes, :score_components_json)
     """, {
+        "ticker": anomaly["ticker"],
+        "market_title": anomaly.get("market_title", ""),
+        "series_ticker": anomaly.get("series_ticker", ""),
+        "risk_group": anomaly.get("risk_group", ""),
+        "mnpi_actors": anomaly.get("mnpi_actors", ""),
         "subject_name": anomaly.get("subject_name"),
+        "detected_ts": anomaly["detected_ts"],
+        "detected_time": anomaly.get("detected_time", ""),
+        "anomaly_window_start_ts": anomaly.get("anomaly_window_start_ts"),
+        "anomaly_score": anomaly["anomaly_score"],
+        "volume_zscore": anomaly.get("volume_zscore"),
+        "block_trade_ratio": anomaly.get("block_trade_ratio"),
+        "directional_flag": anomaly.get("directional_flag"),
+        "directional_imbalance": anomaly.get("directional_imbalance"),
+        "dominant_side": anomaly.get("dominant_side"),
+        "trigger_type": anomaly.get("trigger_type"),
+        "price_before": anomaly.get("price_before"),
+        "price_current": anomaly.get("price_current"),
+        "volume_in_window": anomaly.get("volume_in_window"),
+        "correlated_event": anomaly.get("correlated_event"),
+        "notes": anomaly.get("notes"),
         "score_components_json": score_components_json,
-        **anomaly,
     })
     conn.commit()
     conn.close()
@@ -876,20 +945,171 @@ def get_correlations(limit: int = 50) -> list:
     return rows
 
 
-def prune_historical_data(order_book_days: int = 14, trade_days: int = 30):
+def insert_score_history(record: dict, conn: sqlite3.Connection | None = None) -> None:
+    import json as _json
+
+    own_conn = conn is None
+    if own_conn:
+        conn = get_conn()
+    components = record.get("score_components_json")
+    if components is None and record.get("score_components") is not None:
+        components = _json.dumps(record["score_components"])
+    conn.execute(
+        """
+        INSERT INTO score_history
+            (run_ts, ticker, series_ticker, formula_version, flagged,
+             anomaly_score, score_components_json, reject_reason)
+        VALUES
+            (:run_ts, :ticker, :series_ticker, :formula_version, :flagged,
+             :anomaly_score, :score_components_json, :reject_reason)
+        """,
+        {
+            "run_ts": record["run_ts"],
+            "ticker": record["ticker"],
+            "series_ticker": record.get("series_ticker"),
+            "formula_version": record.get("formula_version", 1),
+            "flagged": 1 if record.get("flagged") else 0,
+            "anomaly_score": record.get("anomaly_score"),
+            "score_components_json": components,
+            "reject_reason": record.get("reject_reason"),
+        },
+    )
+    if own_conn:
+        conn.commit()
+        conn.close()
+
+
+def upsert_correlation_decision(record: dict, conn: sqlite3.Connection | None = None) -> bool:
+    """Insert or update a correlation decision row. Returns True if row was written."""
+    import json as _json
+
+    own_conn = conn is None
+    if own_conn:
+        conn = get_conn()
+    explanation = record.get("explanation_json")
+    if explanation is None and record.get("explanation") is not None:
+        explanation = _json.dumps(record["explanation"])
+    elif isinstance(explanation, dict):
+        explanation = _json.dumps(explanation)
+
+    c = conn.cursor()
+    c.execute(
+        """
+        SELECT confidence_score, decision FROM correlation_decisions
+        WHERE anomaly_id = ? AND news_id = ? AND matcher_version = ?
+        """,
+        (record["anomaly_id"], record["news_id"], record.get("matcher_version", 1)),
+    )
+    existing = c.fetchone()
+    new_conf = record.get("confidence_score") or 0.0
+    new_decision = record["decision"]
+    if existing is not None:
+        old_conf = float(existing["confidence_score"] or 0.0)
+        old_decision = existing["decision"]
+        if old_decision == new_decision:
+            if old_conf > 0 and abs(new_conf - old_conf) / old_conf < 0.05:
+                if own_conn:
+                    conn.close()
+                return False
+            if old_conf == 0 and new_conf == 0:
+                if own_conn:
+                    conn.close()
+                return False
+
+    c.execute(
+        """
+        INSERT INTO correlation_decisions
+            (run_ts, anomaly_id, news_id, matcher_version, ticker,
+             decision, confidence_score, explanation_json)
+        VALUES
+            (:run_ts, :anomaly_id, :news_id, :matcher_version, :ticker,
+             :decision, :confidence_score, :explanation_json)
+        ON CONFLICT(anomaly_id, news_id, matcher_version) DO UPDATE SET
+            run_ts = excluded.run_ts,
+            ticker = excluded.ticker,
+            decision = excluded.decision,
+            confidence_score = excluded.confidence_score,
+            explanation_json = excluded.explanation_json
+        """,
+        {
+            "run_ts": record["run_ts"],
+            "anomaly_id": record["anomaly_id"],
+            "news_id": record["news_id"],
+            "matcher_version": record.get("matcher_version", 1),
+            "ticker": record.get("ticker"),
+            "decision": new_decision,
+            "confidence_score": new_conf,
+            "explanation_json": explanation,
+        },
+    )
+    if own_conn:
+        conn.commit()
+        conn.close()
+    return True
+
+
+def insert_correlation_run_summary(summary: dict, conn: sqlite3.Connection | None = None) -> None:
+    import json as _json
+
+    own_conn = conn is None
+    if own_conn:
+        conn = get_conn()
+    rejects = summary.get("rejects_by_reason_json")
+    if rejects is None and summary.get("rejects_by_reason") is not None:
+        rejects = _json.dumps(summary["rejects_by_reason"])
+    elif isinstance(rejects, dict):
+        rejects = _json.dumps(rejects)
+    conn.execute(
+        """
+        INSERT INTO correlation_run_summary
+            (run_ts, anomalies_evaluated, pairs_temporal_excluded,
+             pairs_persisted, accepts, rejects_by_reason_json)
+        VALUES
+            (:run_ts, :anomalies_evaluated, :pairs_temporal_excluded,
+             :pairs_persisted, :accepts, :rejects_by_reason_json)
+        """,
+        {
+            "run_ts": summary["run_ts"],
+            "anomalies_evaluated": summary.get("anomalies_evaluated", 0),
+            "pairs_temporal_excluded": summary.get("pairs_temporal_excluded", 0),
+            "pairs_persisted": summary.get("pairs_persisted", 0),
+            "accepts": summary.get("accepts", 0),
+            "rejects_by_reason_json": rejects,
+        },
+    )
+    if own_conn:
+        conn.commit()
+        conn.close()
+
+
+def prune_historical_data(
+    order_book_days: int = 14,
+    trade_days: int | None = None,
+):
     import time as _time
+    import config as _config
+
+    if trade_days is None:
+        trade_days = _config.get_trade_retention_days()
     now_ts = int(_time.time())
     conn = get_conn()
     c = conn.cursor()
-    
-    # Prune old trades
+
     cutoff_trades = now_ts - (trade_days * 86400)
     c.execute("DELETE FROM trades WHERE created_ts < ?", (cutoff_trades,))
-    
-    # Prune old microstructure alerts
+
     cutoff_alerts = now_ts - (order_book_days * 86400)
     c.execute("DELETE FROM microstructure_alerts WHERE timestamp < ?", (cutoff_alerts,))
-    
+
+    score_days = _config.get_score_history_retention_days()
+    cutoff_score = now_ts - (score_days * 86400)
+    c.execute("DELETE FROM score_history WHERE run_ts < ?", (cutoff_score,))
+
+    corr_days = _config.get_correlation_decisions_retention_days()
+    cutoff_corr = now_ts - (corr_days * 86400)
+    c.execute("DELETE FROM correlation_decisions WHERE run_ts < ?", (cutoff_corr,))
+    c.execute("DELETE FROM correlation_run_summary WHERE run_ts < ?", (cutoff_corr,))
+
     conn.commit()
     conn.close()
 

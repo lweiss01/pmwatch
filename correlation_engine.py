@@ -15,6 +15,7 @@ import config
 import db
 from expected_events import adjust_temporal_for_expected_event
 from keyword_matcher import (
+    MATCHER_VERSION,
     SERIES_RULES,
     explain_for_correlation,
     series_allowed_for_source,
@@ -42,6 +43,14 @@ MIN_CORRELATION_CONFIDENCE = config.DEFAULT_CORRELATION_THRESHOLDS["min_confiden
 MAX_ANOMALY_SCORE_INPUT = 100.0
 # When top-two article confidences differ by less than this fraction, keep only the best.
 CORRELATION_AMBIGUITY_REL_GAP = 0.15
+
+# Reject reasons worth persisting for threshold tuning (post-temporal only).
+PERSIST_DECISION_REJECT_REASONS = frozenset({
+    "below_match_quality_floor",
+    "subject_gate",
+    "below_min_confidence",
+    "ambiguity_dropped",
+})
 
 
 @dataclass
@@ -129,7 +138,7 @@ def _confidence_breakdown(
         temporal, event_adjust = adjust_temporal_for_expected_event(
             series_ticker,
             time_diff,
-            int(anomaly["detected_ts"]),
+            int(anomaly.get("anomaly_window_start_ts") or anomaly["detected_ts"]),
             int(news_article["published_ts"]),
             base_temporal,
         )
@@ -214,7 +223,10 @@ def evaluate_correlation_pair(
     series_ticker: str,
 ) -> CorrelationExplanation:
     """Evaluate one anomaly↔article pair and return a structured explanation."""
-    time_diff = article["published_ts"] - anomaly["detected_ts"]
+    anomaly_ts = int(
+        anomaly.get("anomaly_window_start_ts") or anomaly["detected_ts"]
+    )
+    time_diff = article["published_ts"] - anomaly_ts
     direction = temporal_direction(time_diff)
     temporal = temporal_multiplier(time_diff)
     article_source = article.get("source")
@@ -412,6 +424,33 @@ def _select_correlations_for_anomaly(
     return ranked
 
 
+def _should_persist_decision(explanation: CorrelationExplanation) -> bool:
+    if explanation.reject_reason == "outside_temporal_window":
+        return False
+    if explanation.decision == "accept":
+        return True
+    reason = explanation.reject_reason or ""
+    return reason in PERSIST_DECISION_REJECT_REASONS
+
+
+def _persist_correlation_decision(
+    anomaly: dict,
+    article: dict,
+    explanation: CorrelationExplanation,
+    run_ts: int,
+) -> bool:
+    return db.upsert_correlation_decision({
+        "run_ts": run_ts,
+        "anomaly_id": anomaly["id"],
+        "news_id": article["id"],
+        "matcher_version": MATCHER_VERSION,
+        "ticker": anomaly.get("ticker"),
+        "decision": explanation.decision,
+        "confidence_score": explanation.confidence_score,
+        "explanation": explanation.to_dict(),
+    })
+
+
 def correlate_all_recent_anomalies(lookback_days: int = 7) -> int:
     """Scan recent anomalies and match them to ingested news articles."""
     conn = db.get_conn()
@@ -444,7 +483,13 @@ def correlate_all_recent_anomalies(lookback_days: int = 7) -> int:
     )
     subject_terms_cache: dict[str, list[str] | None] = {}
 
+    run_ts = int(time.time())
+    summary_rejects: dict[str, int] = {}
+    pairs_temporal_excluded = 0
+    pairs_persisted = 0
+    accepts_count = 0
     correlations_inserted = 0
+
     for anomaly in anomalies:
         series_ticker = anomaly["series_ticker"]
         if not series_ticker:
@@ -485,12 +530,63 @@ def correlate_all_recent_anomalies(lookback_days: int = 7) -> int:
                 subject_terms,
                 series_ticker,
             )
+            if explanation.reject_reason == "outside_temporal_window":
+                pairs_temporal_excluded += 1
+                summary_rejects["outside_temporal_window"] = (
+                    summary_rejects.get("outside_temporal_window", 0) + 1
+                )
+                continue
+
+            if _should_persist_decision(explanation):
+                if _persist_correlation_decision(
+                    anomaly, article, explanation, run_ts
+                ):
+                    pairs_persisted += 1
+                reason_key = (
+                    "accept"
+                    if explanation.decision == "accept"
+                    else explanation.reject_reason or "reject"
+                )
+                summary_rejects[reason_key] = summary_rejects.get(reason_key, 0) + 1
+
             if explanation.decision != "accept":
                 _log_rejection(anomaly, article, explanation)
                 continue
             accepted.append((article, explanation))
 
-        for article, explanation in _select_correlations_for_anomaly(accepted):
+        selected = _select_correlations_for_anomaly(accepted)
+        selected_news_ids = {article["id"] for article, _ in selected}
+
+        for article, explanation in accepted:
+            if article["id"] not in selected_news_ids:
+                dropped = CorrelationExplanation(
+                    decision="reject",
+                    match=explanation.match,
+                    temporal_direction=explanation.temporal_direction,
+                    temporal_multiplier=explanation.temporal_multiplier,
+                    confidence_score=explanation.confidence_score,
+                    score_type=explanation.score_type,
+                    confidence_components=explanation.confidence_components,
+                    sub_scores=explanation.sub_scores,
+                    expected_event=explanation.expected_event,
+                    subject_terms=explanation.subject_terms,
+                    subject_gate_passed=explanation.subject_gate_passed,
+                    reject_reason="ambiguity_dropped",
+                    final_rationale=(
+                        f"Dropped in favor of higher-confidence match "
+                        f"(confidence {explanation.confidence_score:.2f})."
+                    ),
+                    competing_candidates=explanation.competing_candidates,
+                )
+                if _persist_correlation_decision(
+                    anomaly, article, dropped, run_ts
+                ):
+                    pairs_persisted += 1
+                summary_rejects["ambiguity_dropped"] = (
+                    summary_rejects.get("ambiguity_dropped", 0) + 1
+                )
+
+        for article, explanation in selected:
             match_data = explanation.match
             matched_terms = (
                 match_data.get("matched_anchors", [])
@@ -498,7 +594,9 @@ def correlate_all_recent_anomalies(lookback_days: int = 7) -> int:
                 + match_data.get("matched_required", [])
                 + match_data.get("matched_context", [])
             )
-            time_diff = article["published_ts"] - anomaly["detected_ts"]
+            time_diff = article["published_ts"] - int(
+                anomaly.get("anomaly_window_start_ts") or anomaly["detected_ts"]
+            )
             correlation = {
                 "anomaly_id": anomaly["id"],
                 "cluster_first_seen_ts": anomaly["detected_ts"],
@@ -516,6 +614,7 @@ def correlate_all_recent_anomalies(lookback_days: int = 7) -> int:
             try:
                 db.insert_correlation(correlation)
                 correlations_inserted += 1
+                accepts_count += 1
             except sqlite3.IntegrityError:
                 pass
             except Exception as e:
@@ -525,6 +624,15 @@ def correlate_all_recent_anomalies(lookback_days: int = 7) -> int:
                     article["id"],
                     e,
                 )
+
+    db.insert_correlation_run_summary({
+        "run_ts": run_ts,
+        "anomalies_evaluated": len(anomalies),
+        "pairs_temporal_excluded": pairs_temporal_excluded,
+        "pairs_persisted": pairs_persisted,
+        "accepts": accepts_count,
+        "rejects_by_reason": summary_rejects,
+    })
 
     if correlations_inserted > 0:
         log.info("Created %d news-to-anomaly correlations.", correlations_inserted)
