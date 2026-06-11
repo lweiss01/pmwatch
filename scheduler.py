@@ -2,6 +2,7 @@ import logging
 from pathlib import Path
 from datetime import datetime, timezone
 from apscheduler.schedulers.blocking import BlockingScheduler
+from apscheduler.executors.pool import ThreadPoolExecutor
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 import db
@@ -62,7 +63,10 @@ def collect_and_score():
 if __name__ == "__main__":
     db.init_db()
 
-    scheduler = BlockingScheduler(timezone="UTC")
+    # Serialize all scheduler jobs so SQLite writes from collection, feeds, and
+    # microstructure never overlap (avoids database is locked under WAL).
+    executors = {"default": ThreadPoolExecutor(max_workers=1)}
+    scheduler = BlockingScheduler(executors=executors, timezone="UTC")
     scheduler.add_job(
         collect_and_score,
         trigger=IntervalTrigger(minutes=SCHEDULER_INTERVAL),

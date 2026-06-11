@@ -29,6 +29,9 @@ HTTP_USER_AGENT = (
 HTTP_RSS_ACCEPT = "application/rss+xml, application/xml, text/xml, */*"
 SEC_USER_AGENT = "pmwatch transparency tool (pmwatch@users.noreply.github.com)"
 
+# TODO: Replace live Senate eFD POST and SEC Form 4 Atom scrape with official bulk
+# data sources (SEC EDGAR bulk/API; Senate PTR bulk export) to avoid 403 bot blocks.
+
 HOUSE_FD_ZIP_URL = (
     "https://disclosures-clerk.house.gov/public_disc/financial-pdfs/{year}FD.zip"
 )
@@ -489,7 +492,10 @@ def fetch_and_ingest_feeds() -> int:
         except Exception as e:
             log.error("Failed to fetch %s: %s", source_label, e)
 
-    correlate_all_recent_anomalies()
+    try:
+        correlate_all_recent_anomalies()
+    except Exception as e:
+        log.error("Correlation pass after feed ingestion failed: %s", e)
 
     log.info("News feed ingestion complete. %d total items ingested.", total_ingested)
     return total_ingested

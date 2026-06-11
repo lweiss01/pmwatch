@@ -14,7 +14,22 @@ def get_conn(timeout: float = 30.0) -> sqlite3.Connection:
     conn = sqlite3.connect(DB_PATH, timeout=timeout)
     conn.row_factory = sqlite3.Row
     conn.execute(f"PRAGMA busy_timeout = {BUSY_TIMEOUT_MS}")
+    conn.execute("PRAGMA journal_mode=WAL")
     return conn
+
+
+def commit_with_retry(conn: sqlite3.Connection, max_attempts: int = 5) -> None:
+    """Commit, retrying briefly when SQLite reports database is locked."""
+    delay = 0.05
+    for attempt in range(max_attempts):
+        try:
+            conn.commit()
+            return
+        except sqlite3.OperationalError as exc:
+            if "locked" not in str(exc).lower() or attempt == max_attempts - 1:
+                raise
+            time.sleep(delay)
+            delay = min(delay * 2, 1.0)
 
 
 def _close_conn(conn: sqlite3.Connection | None, own_conn: bool) -> None:
@@ -885,10 +900,11 @@ def cap_anomaly_scores(max_score: float = 100.0) -> int:
     return updated
 
 
-def insert_correlation(correlation: dict):
-    conn = get_conn()
-    c = conn.cursor()
-    c.execute("""
+def insert_correlation(correlation: dict, conn: sqlite3.Connection | None = None):
+    own_conn = conn is None
+    if own_conn:
+        conn = get_conn()
+    conn.execute("""
         INSERT OR IGNORE INTO news_correlations
             (anomaly_id, cluster_first_seen_ts, ticker, news_id, lead_time_seconds,
              confidence_score, notes, explanation_json)
@@ -905,8 +921,9 @@ def insert_correlation(correlation: dict):
         "notes": correlation["notes"],
         "explanation_json": correlation.get("explanation_json"),
     })
-    conn.commit()
-    conn.close()
+    if own_conn:
+        commit_with_retry(conn)
+        conn.close()
 
 
 def get_correlations(limit: int = 50) -> list:
@@ -975,7 +992,7 @@ def insert_score_history(record: dict, conn: sqlite3.Connection | None = None) -
         },
     )
     if own_conn:
-        conn.commit()
+        commit_with_retry(conn)
         conn.close()
 
 
@@ -987,7 +1004,7 @@ def insert_score_history_bulk(records: list[dict]) -> None:
     try:
         for record in records:
             insert_score_history(record, conn=conn)
-        conn.commit()
+        commit_with_retry(conn)
     finally:
         conn.close()
 
@@ -1056,7 +1073,7 @@ def upsert_correlation_decision(record: dict, conn: sqlite3.Connection | None = 
         },
     )
     if own_conn:
-        conn.commit()
+        commit_with_retry(conn)
         conn.close()
     return True
 
@@ -1091,7 +1108,7 @@ def insert_correlation_run_summary(summary: dict, conn: sqlite3.Connection | Non
         },
     )
     if own_conn:
-        conn.commit()
+        commit_with_retry(conn)
         conn.close()
 
 
