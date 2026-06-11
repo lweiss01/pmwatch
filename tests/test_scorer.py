@@ -173,6 +173,27 @@ class TestScorerHygiene(unittest.TestCase):
         self.assertEqual(scorer.clearance_multiplier({}), 1.0)
         self.assertEqual(scorer.clearance_multiplier({"clearance_tier": 2}), 1.1)
 
+    @patch.object(scorer, "price_divergence_from_trades")
+    @patch.object(scorer, "block_trade_signal_from_trades")
+    @patch.object(scorer, "volume_zscore_from_trades")
+    def test_evaluate_market_no_candles_oi_bonus_zero(
+        self, mock_vol, mock_block, mock_price
+    ):
+        mock_vol.return_value = 4.0
+        mock_block.return_value = _block_mock(ratio=0.1)
+        mock_price.return_value = {
+            "max_jump": 0.05,
+            "direction": "up",
+            "price_now": 0.50,
+            "price_before": 0.45,
+        }
+
+        evaluation = scorer.evaluate_market(
+            "KXFED-TEST", _market(), _minimal_trades(), None
+        )
+        self.assertEqual(evaluation["score_components"]["oi_bonus"], 0.0)
+        self.assertEqual(evaluation["score_components"]["oi_zscore"], 0.0)
+
     @patch.object(config, "get_yellow_score", return_value=80.0)
     @patch.object(scorer, "price_divergence_from_trades")
     @patch.object(scorer, "block_trade_signal_from_trades")

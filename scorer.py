@@ -306,13 +306,16 @@ def compute_anomaly_window_start_ts(
     return min(t["created_ts"] for t in window_trades)
 
 
-def oi_zscore_from_candles(ticker: str, window_minutes: int = 120) -> float:
-    """Open-interest delta z-score from stored candlesticks."""
-    candles = db.get_candles(ticker, limit_minutes=7 * 24 * 60)
+def oi_zscore_from_candles(
+    candles: list,
+    window_minutes: int = 120,
+    now_ts: int | None = None,
+) -> float:
+    """Open-interest delta z-score from pre-fetched candlesticks."""
     if len(candles) < 3:
         return 0.0
 
-    now_ts = int(time.time())
+    now_ts = now_ts if now_ts is not None else int(time.time())
     cutoff_ts = now_ts - (window_minutes * 60)
     recent = [c for c in candles if c["end_period_ts"] >= cutoff_ts]
     baseline = [c for c in candles if c["end_period_ts"] < cutoff_ts]
@@ -337,6 +340,12 @@ def oi_zscore_from_candles(ticker: str, window_minutes: int = 120) -> float:
     if std > 0:
         return float((recent_delta - deltas.mean()) / std)
     return 0.0 if recent_delta <= 0 else 2.0
+
+
+def oi_zscore(ticker: str, window_minutes: int = 120) -> float:
+    """Legacy wrapper: fetch candles and delegate to oi_zscore_from_candles."""
+    candles = db.get_candles(ticker, limit_minutes=7 * 24 * 60)
+    return oi_zscore_from_candles(candles, window_minutes=window_minutes)
 
 
 def adaptive_yellow_threshold(ticker: str) -> float | None:
@@ -374,6 +383,7 @@ def evaluate_market(
     trades_7d: list,
     recent_scores: dict[str, float] | None = None,
     run_ts: int | None = None,
+    candles_7d: list | None = None,
 ) -> dict:
     """Score a market and return a record suitable for score_history (always)."""
     run_ts = run_ts if run_ts is not None else int(time.time())
@@ -402,7 +412,9 @@ def evaluate_market(
     )
     block = block_trade_signal_from_trades(trades_block)
     price = price_divergence_from_trades(trades_price)
-    oi_z = oi_zscore_from_candles(ticker, window_minutes=BLOCK_WINDOW_MINUTES)
+    oi_z = oi_zscore_from_candles(
+        candles_7d or [], window_minutes=BLOCK_WINDOW_MINUTES, now_ts=now_ts
+    )
     oi_bonus = min(
         config.get_oi_max_bonus(),
         max(0.0, oi_z) * config.get_oi_z_weight(),
@@ -499,8 +511,11 @@ def score_market(
     market: dict,
     trades_7d: list,
     recent_scores: dict[str, float] | None = None,
+    candles_7d: list | None = None,
 ) -> dict | None:
-    evaluation = evaluate_market(ticker, market, trades_7d, recent_scores)
+    evaluation = evaluate_market(
+        ticker, market, trades_7d, recent_scores, candles_7d=candles_7d
+    )
     return evaluation.get("anomaly_payload")
 
 
@@ -534,8 +549,14 @@ def run_scorer() -> int:
         ticker = market["ticker"]
         try:
             trades_7d = db.get_recent_trades(ticker, minutes=7 * 24 * 60)
+            candles_7d = db.get_candles(ticker, limit_minutes=7 * 24 * 60)
             evaluation = evaluate_market(
-                ticker, market, trades_7d, recent_scores, run_ts=run_ts
+                ticker,
+                market,
+                trades_7d,
+                recent_scores,
+                run_ts=run_ts,
+                candles_7d=candles_7d,
             )
             db.insert_score_history(evaluation)
             scored += 1
