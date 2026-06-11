@@ -1,0 +1,32 @@
+{
+  "kxfed_rate_decision_accept": {
+    "series": "KXFED",
+    "title": "Federal Reserve cuts interest rates by 25 basis points, Chair Powell signals more easing",
+    "description": "",
+    "source": "Federal Reserve Press",
+    "expect_decision": "accept",
+    "min_quality": 0.35
+  },
+  "kxfed_stress_test_reject": {
+    "series": "KXFED",
+    "title": "Federal Reserve Board announces annual bank stress test results",
+    "description": "Results show major banks remain well capitalized.",
+    "source": "Federal Reserve Press",
+    "expect_decision": "reject",
+    "expect_reject_reason": "topic_family_blocklist"
+  },
+  "colin_powell_blocklist": {
+    "series": "KXFED",
+    "title": "Colin Powell discusses legacy of monetary policy at conference",
+    "description": "Former Fed chair Colin Powell spoke on historical rate decisions.",
+    "source": "Federal Reserve Press",
+    "expect_decision": "reject"
+  },
+  "post_hoc_negation": {
+    "series": "KXCABOUT",
+    "title": "Reports that his resignation was denied by the White House",
+    "description": "Chief of staff will remain in post according to officials.",
+    "source": "Reuters",
+    "expect_decision": "reject"
+  }
+}

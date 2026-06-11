@@ -21,6 +21,8 @@ MIN_INGEST_QUALITY = config.DEFAULT_MATCHER_THRESHOLDS["min_ingest_quality"]
 MIN_CORRELATION_MATCH_QUALITY = config.DEFAULT_CORRELATION_THRESHOLDS["min_match_quality"]
 # When top-two candidate qualities differ by less than this, keep the best (ambiguous cluster).
 AMBIGUITY_QUALITY_GAP = 0.15
+# Bump when matcher logic changes materially (quality saturation = 2 in Phase 2).
+MATCHER_VERSION = 2
 
 # Short tokens that need word-boundary matching to avoid substring false positives.
 SHORT_BOUNDARY_TERMS = frozenset({
@@ -489,11 +491,13 @@ def _compute_quality(
         return round(max(0.35, req_score), 3), components
 
     if rule.require_both and rule.anchors and rule.signals:
-        anchor_score = min(1.0, len(matched_anchors) / max(1, len(rule.anchors)))
-        signal_score = min(1.0, len(matched_signals) / max(1, len(rule.signals)))
+        # Saturation: two strong hits reach full score regardless of list length.
+        anchor_score = min(1.0, len(matched_anchors) / 2)
+        signal_score = min(1.0, len(matched_signals) / 2)
         components = {
             "anchor_score": round(anchor_score, 3),
             "signal_score": round(signal_score, 3),
+            "saturation_divisor": 2,
         }
         return round(0.35 * anchor_score + 0.65 * signal_score, 3), components
 
