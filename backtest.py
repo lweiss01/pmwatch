@@ -2,6 +2,11 @@
 """
 Replay labeled events against stored trades and correlation decisions.
 
+Matcher version comparison (--compare-matcher-versions) returns empty until
+two matcher versions have both produced correlation_decisions rows; after
+matcher v3 ships, v2-vs-v3 comparison becomes meaningful following the
+next correlation runs.
+
 Usage:
     python backtest.py --days 30
     python backtest.py --compare-matcher-versions

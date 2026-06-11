@@ -39,7 +39,7 @@ Prediction market contracts trade within fixed bounds ($0.00–$1.00). `pmwatch`
 
 * **Compound scoring** from volume Z-score (robust median/MAD), block-trade ratio, price divergence, and open-interest delta.
 * **Signal windows** — block trades use a 120-minute window; price divergence uses 360 minutes (not full 7-day history).
-* **Formula versioning** — `score_history.formula_version` tracks scorer changes; adaptive thresholds filter by current version.
+* **Formula versioning** — `score_history.formula_version` tracks scorer changes (current: v4); adaptive thresholds filter by current version. Formula versions 1 and 2 never shipped separately (Phases 1, 6, and 7 deployed together at version 3), so score_history has no v1/v2 strata.
 * **Score cap at 100** — prevents uncapped outliers from inflating downstream correlation confidence.
 * **Score-delta deduplication** — suppresses re-flags within a configurable window (default 2 hours) unless the new score is materially higher (default ≥20%).
 * **MNPI clearance tiers** — watchlist actor structure (tiers 1–3) applies multipliers to base scores for higher-trust actor groups.

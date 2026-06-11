@@ -30,6 +30,7 @@ DEFAULT_SCORER_THRESHOLDS = {
     "quiet_market_min_volume": 15.0,
     "oi_max_bonus": 3.0,
     "oi_z_weight": 1.5,
+    "vol_z_cap": 25.0,
     "adaptive_threshold_enabled": False,
     "adaptive_percentile": 99,
     "adaptive_history_days": 90,
@@ -117,6 +118,10 @@ def get_oi_max_bonus() -> float:
 
 def get_oi_z_weight() -> float:
     return float(get_scorer_thresholds()["oi_z_weight"])
+
+
+def get_vol_z_cap() -> float:
+    return float(get_scorer_thresholds()["vol_z_cap"])
 
 
 def get_adaptive_threshold_enabled() -> bool:

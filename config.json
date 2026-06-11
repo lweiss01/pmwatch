@@ -16,6 +16,7 @@
     "quiet_market_min_volume": 15,
     "oi_max_bonus": 3.0,
     "oi_z_weight": 1.5,
+    "vol_z_cap": 25.0,
     "adaptive_threshold_enabled": false,
     "adaptive_percentile": 99,
     "adaptive_history_days": 90,

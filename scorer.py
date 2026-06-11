@@ -19,7 +19,7 @@ SCORE_DELTA_THRESHOLD = config.DEFAULT_SCORER_THRESHOLDS["score_delta_threshold"
 CLEARANCE_MULTIPLIER = {1: 1.0, 2: 1.1, 3: 1.25}
 BLOCK_WINDOW_MINUTES = 120
 PRICE_WINDOW_MINUTES = 360
-SCORER_FORMULA_VERSION = 3
+SCORER_FORMULA_VERSION = 4
 QUIET_MARKET_SPIKE_Z = 4.0
 
 
@@ -407,9 +407,10 @@ def evaluate_market(
     trades_block = filter_trades_by_window(trades_7d, BLOCK_WINDOW_MINUTES, now_ts)
     trades_price = filter_trades_by_window(trades_7d, PRICE_WINDOW_MINUTES, now_ts)
 
-    vol_z = volume_zscore_from_trades(
+    vol_z_raw = volume_zscore_from_trades(
         trades_7d, window_minutes=BLOCK_WINDOW_MINUTES, now_ts=now_ts
     )
+    vol_z = min(vol_z_raw, config.get_vol_z_cap())
     block = block_trade_signal_from_trades(trades_block)
     price = price_divergence_from_trades(trades_price)
     oi_z = oi_zscore_from_candles(
@@ -441,6 +442,7 @@ def evaluate_market(
 
     score_components = {
         "formula_version": SCORER_FORMULA_VERSION,
+        "volume_zscore_raw": round(vol_z_raw, 3),
         "volume_zscore": round(vol_z, 3),
         "oi_zscore": round(oi_z, 3),
         "oi_bonus": round(oi_bonus, 2),
@@ -544,6 +546,7 @@ def run_scorer() -> int:
     flagged = 0
     scored = 0
     run_ts = int(time.time())
+    score_records: list[dict] = []
 
     for market in markets:
         ticker = market["ticker"]
@@ -558,7 +561,7 @@ def run_scorer() -> int:
                 run_ts=run_ts,
                 candles_7d=candles_7d,
             )
-            db.insert_score_history(evaluation)
+            score_records.append(evaluation)
             scored += 1
             result = evaluation.get("anomaly_payload")
             if result:
@@ -574,6 +577,9 @@ def run_scorer() -> int:
                 )
         except Exception as e:
             log.error(f"Scorer error on {ticker}: {e}")
+
+    if score_records:
+        db.insert_score_history_bulk(score_records)
 
     log.info(f"=== Scorer complete: {scored} scored, {flagged} flagged ===")
     return flagged

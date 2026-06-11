@@ -979,6 +979,19 @@ def insert_score_history(record: dict, conn: sqlite3.Connection | None = None) -
         conn.close()
 
 
+def insert_score_history_bulk(records: list[dict]) -> None:
+    """Insert multiple score_history rows in one transaction."""
+    if not records:
+        return
+    conn = get_conn()
+    try:
+        for record in records:
+            insert_score_history(record, conn=conn)
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def upsert_correlation_decision(record: dict, conn: sqlite3.Connection | None = None) -> bool:
     """Insert or update a correlation decision row. Returns True if row was written."""
     import json as _json
