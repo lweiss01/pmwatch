@@ -169,9 +169,11 @@ def compute_cluster_record(ticker: str, events: list[dict]) -> dict:
     first = events_sorted[0]
     last = events_sorted[-1]
 
+    # Cluster identity is (ticker, first_seen_ts) scoped to the lookback window;
+    # stale rows are removed by first_seen_ts prune in run_cluster_scorer.
+
     return {
         "ticker": ticker,
-        "cluster_key": str(first.get("id", first["detected_ts"])),
         "series_ticker": first.get("series_ticker", ""),
         "market_title": first.get("market_title", ""),
         "risk_group": first.get("risk_group", ""),
@@ -248,10 +250,10 @@ def run_cluster_scorer(lookback_days: int = 30) -> int:
     # Bulk upsert all clusters in one transaction
     written = db.upsert_clusters_bulk(records)
 
-    # Drop cluster rows whose window ended before lookback (stale identity cleanup).
+    # Drop cluster rows whose first_seen_ts predates lookback (stale identity cleanup).
     stale_cutoff = int(time.time()) - (lookback_days * 86400)
     conn = db.get_conn()
-    conn.execute("DELETE FROM clusters WHERE last_seen_ts < ?", (stale_cutoff,))
+    conn.execute("DELETE FROM clusters WHERE first_seen_ts < ?", (stale_cutoff,))
     conn.commit()
     conn.close()
 
