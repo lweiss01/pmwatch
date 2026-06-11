@@ -22,7 +22,7 @@ MIN_CORRELATION_MATCH_QUALITY = config.DEFAULT_CORRELATION_THRESHOLDS["min_match
 # When top-two candidate qualities differ by less than this, keep the best (ambiguous cluster).
 AMBIGUITY_QUALITY_GAP = 0.15
 # Bump when matcher logic changes materially (quality saturation = 2 in Phase 2).
-MATCHER_VERSION = 2
+MATCHER_VERSION = 3
 
 # Short tokens that need word-boundary matching to avoid substring false positives.
 SHORT_BOUNDARY_TERMS = frozenset({
@@ -441,12 +441,17 @@ def term_in_text(term: str, text: str) -> bool:
     return bool(find_term_positions(term, text))
 
 
-def is_negated(text: str, pos: int) -> bool:
-    """True if a negation word appears within 5 tokens before the match position."""
+def is_negated(text: str, pos: int, term: str) -> bool:
+    """True if a negation word appears within 5 tokens before or after the match."""
     before = text[:pos].lower()
-    tokens = re.findall(r"\b[\w']+\b", before)
-    window = tokens[-5:]
-    return any(token in NEGATION_WORDS for token in window)
+    before_tokens = re.findall(r"\b[\w']+\b", before)
+    if any(token in NEGATION_WORDS for token in before_tokens[-5:]):
+        return True
+
+    match_end = pos + len(term)
+    after = text[match_end:].lower()
+    after_tokens = re.findall(r"\b[\w']+\b", after)
+    return any(token in NEGATION_WORDS for token in after_tokens[:5])
 
 
 def _active_matches(terms: list[str], text: str) -> list[str]:
@@ -456,7 +461,7 @@ def _active_matches(terms: list[str], text: str) -> list[str]:
         positions = find_term_positions(term, text)
         if not positions:
             continue
-        if any(not is_negated(text, pos) for pos in positions):
+        if any(not is_negated(text, pos, term) for pos in positions):
             matched.append(term)
     return matched
 
@@ -473,7 +478,7 @@ def _negated_terms(terms: list[str], text: str) -> list[str]:
     negated: list[str] = []
     for term in _sort_terms_longest_first(terms):
         positions = find_term_positions(term, text)
-        if positions and all(is_negated(text, pos) for pos in positions):
+        if positions and all(is_negated(text, pos, term) for pos in positions):
             negated.append(term)
     return negated
 

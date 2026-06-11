@@ -24,8 +24,8 @@
   },
   "post_hoc_negation": {
     "series": "KXCABOUT",
-    "title": "Reports that his resignation was denied by the White House",
-    "description": "Chief of staff will remain in post according to officials.",
+    "title": "His resignation from the cabinet was denied by officials",
+    "description": "Chief of staff will remain in post.",
     "source": "Reuters",
     "expect_decision": "reject"
   }
