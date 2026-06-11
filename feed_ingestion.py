@@ -27,7 +27,7 @@ HTTP_USER_AGENT = (
     "pmwatch/1.0 (local transparency research; +https://github.com/lweiss01/pmwatch)"
 )
 HTTP_RSS_ACCEPT = "application/rss+xml, application/xml, text/xml, */*"
-SEC_USER_AGENT = "pmwatch transparency tool (pmwatch@users.noreply.github.com)"
+SEC_USER_AGENT = "pmwatch lweiss01@users.noreply.github.com"
 
 # TODO: Replace live Senate eFD POST and SEC Form 4 Atom scrape with official bulk
 # data sources (SEC EDGAR bulk/API; Senate PTR bulk export) to avoid 403 bot blocks.
