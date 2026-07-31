@@ -196,6 +196,7 @@ def validate_dates(dates: list[str]) -> list[str]:
         try:
             parsed = datetime.strptime(date_str, "%Y-%m-%d").date()
         except ValueError:
+            log.warning("Dropping unparseable scraped date %r", date_str)
             continue
         if parsed.year < today.year - 1:
             continue

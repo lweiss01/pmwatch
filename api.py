@@ -128,7 +128,11 @@ def get_stats():
             next_run_dt = last_run_dt.timestamp() + (config.get_scheduler_interval() * 60)
             next_run = config.timestamp_to_iso(next_run_dt)
         except Exception:
-            pass
+            log.exception(
+                "Failed to compute next run time from run_time=%r",
+                last_run.get("run_time"),
+            )
+            raise
 
     c.execute("""
         SELECT risk_group, COUNT(*) as count, MAX(anomaly_score) as max_score
@@ -261,7 +265,11 @@ def get_microstructure_alerts(limit: int = 50):
             try:
                 row["details"] = json.loads(row["details"])
             except Exception:
-                pass
+                log.exception(
+                    "Malformed details JSON on microstructure alert id=%r",
+                    row.get("id"),
+                )
+                raise
     return JSONResponse(rows)
 
 

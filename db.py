@@ -1,9 +1,12 @@
 import sqlite3
 import os
+import logging
 import time
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "data", "pmwatch.db")
 BUSY_TIMEOUT_MS = 30_000
+
+log = logging.getLogger(__name__)
 
 
 def get_conn(timeout: float = 30.0) -> sqlite3.Connection:
@@ -265,6 +268,11 @@ def _attach_score_components(rows: list) -> list:
             try:
                 row["score_components"] = _json.loads(raw)
             except (_json.JSONDecodeError, TypeError):
+                log.warning(
+                    "Unreadable score_components_json on anomaly id=%r; treating as null",
+                    row.get("id"),
+                    exc_info=True,
+                )
                 row["score_components"] = None
         else:
             row["score_components"] = None
@@ -377,7 +385,13 @@ def insert_trades(trades: list, conn: sqlite3.Connection | None = None) -> int:
             """, t)
             inserted += c.rowcount
         except sqlite3.Error:
-            pass
+            # Skip the bad row so one malformed trade cannot lose the batch.
+            log.warning(
+                "Skipping trade insert for trade_id=%r ticker=%r",
+                t.get("trade_id"),
+                t.get("ticker"),
+                exc_info=True,
+            )
     if own_conn:
         conn.commit()
     _close_conn(conn, own_conn)
@@ -404,7 +418,13 @@ def insert_candlesticks(candles: list, conn: sqlite3.Connection | None = None) -
             """, candle)
             inserted += c.rowcount
         except sqlite3.Error:
-            pass
+            # Skip the bad row so one malformed candle cannot lose the batch.
+            log.warning(
+                "Skipping candlestick insert for ticker=%r end_period_ts=%r",
+                candle.get("ticker"),
+                candle.get("end_period_ts"),
+                exc_info=True,
+            )
     if own_conn:
         conn.commit()
     _close_conn(conn, own_conn)
@@ -754,7 +774,13 @@ def insert_news_articles(articles: list) -> int:
             """, a)
             inserted += c.rowcount
         except sqlite3.Error:
-            pass
+            # Skip the bad row so one malformed article cannot lose the batch.
+            log.warning(
+                "Skipping news article insert for url=%r source=%r",
+                a.get("url"),
+                a.get("source"),
+                exc_info=True,
+            )
     conn.commit()
     conn.close()
     return inserted
@@ -956,6 +982,11 @@ def get_correlations(limit: int = 50) -> list:
             try:
                 row["explanation"] = _json.loads(raw)
             except (_json.JSONDecodeError, TypeError):
+                log.warning(
+                    "Unreadable explanation_json on correlation id=%r; treating as null",
+                    row.get("id"),
+                    exc_info=True,
+                )
                 row["explanation"] = None
         else:
             row["explanation"] = None

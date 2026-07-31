@@ -6,6 +6,7 @@ Eliminates duplication across api.py, scheduler.py, collector.py, scorer.py, clu
 from __future__ import annotations
 
 import json
+import logging
 import os
 import shutil
 from datetime import datetime, timezone
@@ -13,6 +14,8 @@ from typing import Any
 
 CONFIG_PATH = os.path.join(os.path.dirname(__file__), "config.json")
 CONFIG_BACKUP_PATH = CONFIG_PATH + ".bak"
+
+log = logging.getLogger(__name__)
 
 DEFAULT_CORRELATION_THRESHOLDS = {
     "min_confidence": 12.0,
@@ -165,12 +168,18 @@ def get_correlation_decisions_retention_days() -> int:
 
 
 def load_config() -> dict:
-    """Load config.json with fallback."""
+    """Load config.json, falling back to defaults only when the file is absent."""
     try:
         with open(CONFIG_PATH, encoding="utf-8") as f:
             return json.load(f)
-    except Exception:
+    except FileNotFoundError:
+        log.warning(
+            "config.json not found at %s; using built-in defaults", CONFIG_PATH
+        )
         return {"scheduler_interval_minutes": 30}
+    except Exception:
+        log.exception("Failed to load config from %s", CONFIG_PATH)
+        raise
 
 
 def save_config(cfg: dict) -> None:
@@ -357,6 +366,11 @@ def get_public_settings(cfg: dict | None = None) -> dict:
             try:
                 parsed = datetime.strptime(date_str, "%Y-%m-%d").date()
             except ValueError:
+                log.warning(
+                    "Skipping malformed date %r in scheduled event %r",
+                    date_str,
+                    event.get("label"),
+                )
                 continue
             if parsed >= today:
                 upcoming = date_str
