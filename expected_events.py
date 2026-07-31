@@ -8,12 +8,15 @@ instead of heavy decay — recurring events are expected positioning windows.
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 
 import config
 
 # Tier 3 pre-news band starts after 8 hours (must match correlation_engine).
 TIER2_PRE_NEWS_SECONDS = 8 * 3600
+
+log = logging.getLogger(__name__)
 
 
 def scheduled_events_enabled() -> bool:
@@ -54,6 +57,11 @@ def find_active_event(
             try:
                 event_ts = _parse_event_ts(date_str)
             except ValueError:
+                log.warning(
+                    "Skipping malformed date %r in scheduled event %r",
+                    date_str,
+                    event.get("label"),
+                )
                 continue
             window_start = event_ts - (hours_before * 3600)
             window_end = event_ts + (hours_after * 3600)

@@ -619,7 +619,12 @@ def correlate_all_recent_anomalies(lookback_days: int = 7) -> int:
                     correlations_inserted += 1
                     accepts_count += 1
                 except sqlite3.IntegrityError:
-                    pass
+                    # Expected on re-runs: the unique constraint is the dedup mechanism.
+                    log.debug(
+                        "Correlation already recorded for %s / news %s",
+                        anomaly["ticker"],
+                        article["id"],
+                    )
                 except Exception as e:
                     log.warning(
                         "Failed to insert correlation for %s / news %s: %s",

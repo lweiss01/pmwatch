@@ -3,12 +3,13 @@ import os
 import sys
 import time
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import correlation_engine
 import db
+import expected_events
 
 FIXTURES_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)),
@@ -65,6 +66,36 @@ class TestCorrelationTemporalModel(unittest.TestCase):
         }
         base.update(overrides)
         return base
+
+    def _patch_scheduled_event(
+        self,
+        series: str = "KXFED",
+        label: str = "FOMC rate decision",
+        days_ahead: int = 1,
+        window_hours_before: int = 48,
+        window_hours_after: int = 6,
+    ) -> int:
+        """Install a synthetic scheduled event anchored to the run date.
+
+        A hardcoded calendar date stops landing inside a real config.json event
+        window once it is pruned from scheduled_events, so tests supply their
+        own calendar instead. Returns the event timestamp to derive offsets from.
+        """
+        event_date = (
+            datetime.now(timezone.utc).date() + timedelta(days=days_ahead)
+        ).isoformat()
+        original = expected_events.get_scheduled_events
+        expected_events.get_scheduled_events = lambda: [{
+            "label": label,
+            "series": [series],
+            "dates": [event_date],
+            "window_hours_before": window_hours_before,
+            "window_hours_after": window_hours_after,
+        }]
+        self.addCleanup(
+            setattr, expected_events, "get_scheduled_events", original
+        )
+        return expected_events._parse_event_ts(event_date)
 
     def test_temporal_multiplier_tiers(self):
         self.assertEqual(correlation_engine.temporal_multiplier(3600), 1.8)
@@ -588,8 +619,10 @@ class TestCorrelationTemporalModel(unittest.TestCase):
         self.assertEqual(sub_scores["leakage_plausibility_score"], 0.7)
 
     def test_expected_event_boosts_long_lead_fomc_window(self):
-        detected_ts = int(datetime(2026, 6, 17, 0, 0, tzinfo=timezone.utc).timestamp())
+        event_ts = self._patch_scheduled_event()
+        detected_ts = event_ts - (42 * 3600)
         published_ts = detected_ts + (20 * 3600)
+
         anomaly = self._base_anomaly(
             detected_ts=detected_ts,
             anomaly_score=60.0,
@@ -618,8 +651,17 @@ class TestCorrelationTemporalModel(unittest.TestCase):
         self.assertGreaterEqual(subs_boost["leakage_plausibility_score"], 0.85)
 
     def test_accepted_correlation_stores_sub_scores_in_explanation_json(self):
-        detected_ts = int(datetime(2026, 6, 17, 0, 0, tzinfo=timezone.utc).timestamp())
+        # correlate_all_recent_anomalies() also filters on a lookback window,
+        # so the anomaly has to stay recent as well as inside the event window.
+        event_ts = self._patch_scheduled_event()
+        detected_ts = event_ts - (24 * 3600)
         published_ts = detected_ts + 3600
+        detected_time = datetime.fromtimestamp(
+            detected_ts, tz=timezone.utc
+        ).isoformat().replace("+00:00", "Z")
+        published_time = datetime.fromtimestamp(
+            published_ts, tz=timezone.utc
+        ).isoformat().replace("+00:00", "Z")
         article = self.fixtures["fed_rate_decision_true_positive"]
 
         db.insert_anomaly({
@@ -629,7 +671,7 @@ class TestCorrelationTemporalModel(unittest.TestCase):
             "risk_group": "FOMC",
             "mnpi_actors": "Fed governors",
             "detected_ts": detected_ts,
-            "detected_time": "2026-06-17T00:00:00Z",
+            "detected_time": detected_time,
             "anomaly_score": 70.0,
             "volume_zscore": 10.0,
             "block_trade_ratio": 0.4,
@@ -645,7 +687,7 @@ class TestCorrelationTemporalModel(unittest.TestCase):
             "title": article["title"],
             "description": article["description"],
             "url": "https://example.gov/fed-rate-subscores",
-            "published_time": "2026-06-17T01:00:00Z",
+            "published_time": published_time,
             "published_ts": published_ts,
             "source": "Federal Reserve Press",
             "source_type": "primary_gov",

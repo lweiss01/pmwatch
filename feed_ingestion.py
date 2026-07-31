@@ -55,6 +55,11 @@ def _parse_pub_date(pub_date_str: str | None) -> tuple[str, int]:
         dt_utc = dt.astimezone(timezone.utc)
         return dt_utc.isoformat().replace("+00:00", "Z"), int(dt_utc.timestamp())
     except Exception:
+        log.warning(
+            "Unparseable RFC 2822 pubDate %r; defaulting to now",
+            pub_date_str,
+            exc_info=True,
+        )
         now_ts = int(time.time())
         return config.utc_now_iso(), now_ts
 
@@ -64,6 +69,11 @@ def _parse_iso_date(date_str: str) -> tuple[str, int]:
         dt = datetime.strptime(date_str.strip(), "%m/%d/%Y").replace(tzinfo=timezone.utc)
         return dt.isoformat().replace("+00:00", "Z"), int(dt.timestamp())
     except Exception:
+        log.warning(
+            "Unparseable MM/DD/YYYY date %r; defaulting to now",
+            date_str,
+            exc_info=True,
+        )
         now_ts = int(time.time())
         return config.utc_now_iso(), now_ts
 
@@ -388,6 +398,12 @@ def parse_fed_register_json(json_data: dict, source: str) -> list[dict]:
                 published_time = dt.isoformat().replace("+00:00", "Z")
                 published_ts = int(dt.timestamp())
             except Exception:
+                log.warning(
+                    "Unparseable publication_date %r for %r; defaulting to now",
+                    pub_date,
+                    url,
+                    exc_info=True,
+                )
                 published_time, published_ts = config.utc_now_iso(), int(time.time())
         else:
             published_time, published_ts = config.utc_now_iso(), int(time.time())
